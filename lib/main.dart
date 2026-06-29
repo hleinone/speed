@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speed/src/generated/l10n/l10n.dart';
+import 'package:speed/src/logo.dart';
 import 'package:speed/src/signal_strength.dart';
 import 'package:speed/src/speed_tracker.dart';
 
@@ -92,9 +93,16 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        title: Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: SpeedLogo(height: 28, semanticLabel: L10n.of(context).title),
+        ),
         actions: [
           DropdownMenu(
             initialSelection: _speedUnit,
+            enableSearch: false,
+            requestFocusOnTap: false,
+            keyboardType: TextInputType.none,
             dropdownMenuEntries: SpeedUnit.values.map((u) => DropdownMenuEntry(label: u.title, value: u)).toList(),
             onSelected: (value) {
               if (value == null) return;
