@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:speed/src/generated/l10n/l10n.dart';
 import 'package:speed/src/util/kalman_filter.dart';
 
 class SpeedTracker {
@@ -21,20 +22,11 @@ class SpeedTracker {
     final LocationSettings locationSettings;
 
     if (Platform.isAndroid) {
-      locationSettings = AndroidSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
-      );
+      locationSettings = AndroidSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
     } else if (Platform.isIOS || Platform.isMacOS) {
-      locationSettings = AppleSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
-      );
+      locationSettings = AppleSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
     } else {
-      locationSettings = const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
-      );
+      locationSettings = const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
     }
 
     final hasPermission = await _checkPermissions();
@@ -43,13 +35,10 @@ class SpeedTracker {
       return;
     }
 
-    final initialPosition = await Geolocator.getCurrentPosition(
-      locationSettings: locationSettings,
-    );
+    final initialPosition = await Geolocator.getCurrentPosition(locationSettings: locationSettings);
     // Initialize the filter with the first measurement.
     kalmanFilter = KalmanFilter(
-      initialMeasurement:
-          initialPosition.speed, // Initial state is the first measured speed.
+      initialMeasurement: initialPosition.speed, // Initial state is the first measured speed.
       initialMeasurementNoise: pow(
         initialPosition.speedAccuracy,
         2,
@@ -58,54 +47,42 @@ class SpeedTracker {
     );
 
     void onListen() {
-      positionStreamSubscription =
-          Geolocator.getPositionStream(
-            locationSettings: locationSettings,
-          ).listen(
-            (position) {
-              final rawSpeed = position.speed;
-              double filteredSpeed;
+      positionStreamSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+        (position) {
+          final rawSpeed = position.speed;
+          double filteredSpeed;
 
-              // The measurement noise (R) is the variance of the GPS speed reading.
-              // Variance = (Standard Deviation)^2. We use speedAccuracy as the standard deviation.
-              final double measurementNoise = pow(
-                position.speedAccuracy,
-                2,
-              ).toDouble();
+          // The measurement noise (R) is the variance of the GPS speed reading.
+          // Variance = (Standard Deviation)^2. We use speedAccuracy as the standard deviation.
+          final double measurementNoise = pow(position.speedAccuracy, 2).toDouble();
 
-              // Update the filter with the new measurement.
-              filteredSpeed = kalmanFilter.update(rawSpeed, measurementNoise);
+          // Update the filter with the new measurement.
+          filteredSpeed = kalmanFilter.update(rawSpeed, measurementNoise);
 
-              // Use the same combined accuracy logic as before.
-              const double maxSpeedAccuracyError = 5.0;
-              final double speedConfidence =
-                  1.0 -
-                  (min(position.speedAccuracy, maxSpeedAccuracyError) /
-                      maxSpeedAccuracyError);
-              const double maxHorizontalAccuracyError = 50.0;
-              final double positionConfidence =
-                  1.0 -
-                  (min(position.accuracy, maxHorizontalAccuracyError) /
-                      maxHorizontalAccuracyError);
-              final double finalAccuracy = speedConfidence * positionConfidence;
+          // Use the same combined accuracy logic as before.
+          const double maxSpeedAccuracyError = 5.0;
+          final double speedConfidence =
+              1.0 - (min(position.speedAccuracy, maxSpeedAccuracyError) / maxSpeedAccuracyError);
+          const double maxHorizontalAccuracyError = 50.0;
+          final double positionConfidence =
+              1.0 - (min(position.accuracy, maxHorizontalAccuracyError) / maxHorizontalAccuracyError);
+          final double finalAccuracy = speedConfidence * positionConfidence;
 
-              if (!controller.isClosed) {
-                controller.add(
-                  Speed(
-                    filteredSpeed.isNegative
-                        ? 0
-                        : filteredSpeed, // Ensure speed is not negative
-                    finalAccuracy.clamp(0.0, 1.0),
-                  ),
-                );
-              }
-            },
-            onError: (error) {
-              if (!controller.isClosed) {
-                controller.addError(error);
-              }
-            },
-          );
+          if (!controller.isClosed) {
+            controller.add(
+              Speed(
+                filteredSpeed.isNegative ? 0 : filteredSpeed, // Ensure speed is not negative
+                finalAccuracy.clamp(0.0, 1.0),
+              ),
+            );
+          }
+        },
+        onError: (error) {
+          if (!controller.isClosed) {
+            controller.addError(error);
+          }
+        },
+      );
     }
 
     void onCancel() {
@@ -129,8 +106,7 @@ class SpeedTracker {
       permission = await Geolocator.requestPermission();
     }
 
-    if (permission != LocationPermission.always &&
-        permission != LocationPermission.whileInUse) {
+    if (permission != LocationPermission.always && permission != LocationPermission.whileInUse) {
       debugPrint('permission: $permission');
       return false;
     }
@@ -141,9 +117,7 @@ class SpeedTracker {
     }
 
     if (Platform.isIOS && accuracy == LocationAccuracyStatus.reduced) {
-      accuracy = await Geolocator.requestTemporaryFullAccuracy(
-        purposeKey: 'SpeedPurposeKey',
-      );
+      accuracy = await Geolocator.requestTemporaryFullAccuracy(purposeKey: 'SpeedPurposeKey');
     }
 
     debugPrint('permission: $permission, accuracy: $accuracy');
@@ -188,18 +162,18 @@ enum SpeedUnit {
     }
   }
 
-  String get title {
+  String title(BuildContext context) {
     switch (this) {
       case SpeedUnit.kilometersPerHour:
-        return 'km/h';
+        return L10n.of(context).kilometersPerHour;
       case SpeedUnit.milesPerHour:
-        return 'mph';
+        return L10n.of(context).milesPerHour;
       case SpeedUnit.metersPerSecond:
-        return 'm/s';
+        return L10n.of(context).metersPerSecond;
       case SpeedUnit.footPerSecond:
-        return 'fps';
+        return L10n.of(context).footPerSecond;
       case SpeedUnit.knots:
-        return 'knots';
+        return L10n.of(context).knots;
     }
   }
 }

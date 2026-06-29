@@ -1,4 +1,8 @@
 {
   "@@locale": "fi",
-  "title": "Nopeus"
+  "kilometersPerHour": "km/h",
+  "milesPerHour": "mi/h",
+  "metersPerSecond": "m/s",
+  "footPerSecond": "ft/s",
+  "knots": "solmua"
 }

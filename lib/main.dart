@@ -17,7 +17,7 @@ class SpeedApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      onGenerateTitle: (context) => L10n.of(context).title,
+      title: 'Speed',
       theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue)).copyWith(
         dropdownMenuTheme: const DropdownMenuThemeData(
           inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
@@ -45,12 +45,12 @@ class SpeedPage extends StatefulWidget {
 }
 
 class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
-  late final NumberFormat _numberFormat;
+  late NumberFormat _numberFormat;
+  String? _localeName;
   final _speedTracker = SpeedTracker();
   final _subscriptions = CompositeSubscription();
   Speed? _speed;
   SpeedUnit _speedUnit = SpeedUnit.metersPerSecond;
-  bool _initialized = false;
 
   @override
   void initState() {
@@ -77,9 +77,10 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_initialized) {
-      _initialized = true;
-      _numberFormat = NumberFormat.decimalPattern(L10n.of(context).localeName);
+    final localeName = L10n.of(context).localeName;
+    if (_localeName != localeName) {
+      _localeName = localeName;
+      _numberFormat = NumberFormat.decimalPattern(localeName);
     }
   }
 
@@ -93,9 +94,9 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Align(
+        title: const Align(
           alignment: AlignmentDirectional.centerStart,
-          child: SpeedLogo(height: 28, semanticLabel: L10n.of(context).title),
+          child: SpeedLogo(height: 28, semanticLabel: 'Speed'),
         ),
         actions: [
           DropdownMenu(
@@ -103,7 +104,9 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
             enableSearch: false,
             requestFocusOnTap: false,
             keyboardType: TextInputType.none,
-            dropdownMenuEntries: SpeedUnit.values.map((u) => DropdownMenuEntry(label: u.title, value: u)).toList(),
+            dropdownMenuEntries: SpeedUnit.values
+                .map((u) => DropdownMenuEntry(label: u.title(context), value: u))
+                .toList(),
             onSelected: (value) {
               if (value == null) return;
               setState(() => _speedUnit = value);
@@ -136,7 +139,7 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
                       _numberFormat.format(speed.getAs(_speedUnit)),
                       style: Theme.of(context).textTheme.displayLarge,
                     ),
-                    Text(_speedUnit.title, style: Theme.of(context).textTheme.displaySmall),
+                    Text(_speedUnit.title(context), style: Theme.of(context).textTheme.displaySmall),
                   ],
                 ),
                 SizedBox(height: 8, width: 160, child: SignalStrength(value: speed.accuracy)),

@@ -1,4 +1,8 @@
 {
   "@@locale": "en",
-  "title": "Speed"
+  "kilometersPerHour": "km/h",
+  "milesPerHour": "mph",
+  "metersPerSecond": "m/s",
+  "footPerSecond": "fps",
+  "knots": "knots"
 }
