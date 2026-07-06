@@ -125,6 +125,7 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
             if (speed == null) {
               return const CircularProgressIndicator();
             }
+            final speedText = speed.isCurrent ? _numberFormat.format(speed.getAs(_speedUnit)) : '--';
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -135,14 +136,11 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
                   textBaseline: TextBaseline.ideographic,
                   spacing: 8,
                   children: [
-                    Text(
-                      _numberFormat.format(speed.getAs(_speedUnit)),
-                      style: Theme.of(context).textTheme.displayLarge,
-                    ),
+                    Text(speedText, style: Theme.of(context).textTheme.displayLarge),
                     Text(_speedUnit.title(context), style: Theme.of(context).textTheme.displaySmall),
                   ],
                 ),
-                SizedBox(height: 8, width: 160, child: SignalStrength(value: speed.accuracy)),
+                SizedBox(height: 8, width: 160, child: SignalStrength(value: speed.isCurrent ? speed.accuracy : 0)),
               ],
             );
           },
