@@ -8,7 +8,6 @@ import 'package:speed/src/util/kalman_filter.dart';
 
 typedef SpeedTrackerClock = DateTime Function();
 typedef SpeedTrackerPermissionChecker = Future<bool> Function();
-typedef SpeedTrackerCurrentPositionProvider = Future<Position> Function(LocationSettings locationSettings);
 typedef SpeedTrackerPositionStreamProvider = Stream<Position> Function(LocationSettings locationSettings);
 
 class SpeedTracker {
@@ -20,23 +19,21 @@ class SpeedTracker {
   static const double maxPlausibleAcceleration = 8.0;
   static const Duration maxSampleAge = Duration(seconds: 5);
   static const Duration maxFutureSampleSkew = Duration(seconds: 1);
+  static const int startupWarmupAcceptedSamples = 3;
 
   /// Process noise per second for the Kalman filter. A lower value means more smoothing but less responsiveness.
   final double processNoise;
   final SpeedTrackerClock _clock;
   final SpeedTrackerPermissionChecker? _permissionChecker;
-  final SpeedTrackerCurrentPositionProvider? _currentPositionProvider;
   final SpeedTrackerPositionStreamProvider? _positionStreamProvider;
 
   SpeedTracker({
     this.processNoise = 0.1,
     SpeedTrackerClock? clock,
     SpeedTrackerPermissionChecker? permissionChecker,
-    SpeedTrackerCurrentPositionProvider? currentPositionProvider,
     SpeedTrackerPositionStreamProvider? positionStreamProvider,
   }) : _clock = clock ?? DateTime.now,
        _permissionChecker = permissionChecker,
-       _currentPositionProvider = currentPositionProvider,
        _positionStreamProvider = positionStreamProvider;
 
   Stream<Speed> get stream async* {
@@ -44,6 +41,7 @@ class SpeedTracker {
     StreamSubscription<Position>? positionStreamSubscription;
     Timer? freshnessTimer;
     SpeedStatus lastEmittedStatus = SpeedStatus.unavailable;
+    var acceptedStreamSampleCount = 0;
 
     /// The Kalman filter instance for smoothing speed.
     KalmanFilter? kalmanFilter;
@@ -63,20 +61,6 @@ class SpeedTracker {
     if (!hasPermission) {
       yield* Stream.error('Location permission denied');
       return;
-    }
-
-    final initialPosition = await _getCurrentPosition(locationSettings);
-    final initialValidation = validateSpeedSample(
-      speed: initialPosition.speed,
-      timestamp: initialPosition.timestamp,
-      horizontalAccuracy: initialPosition.accuracy,
-      speedAccuracy: initialPosition.speedAccuracy,
-      now: _clock(),
-    );
-    final initialSample = initialValidation.acceptedSample;
-    if (initialSample != null) {
-      lastAcceptedSample = initialSample;
-      kalmanFilter = _createKalmanFilter(initialSample);
     }
 
     void emitUnavailable() {
@@ -109,6 +93,7 @@ class SpeedTracker {
       positionStreamSubscription = _getPositionStream(locationSettings).listen(
         (position) {
           final previousAcceptedSample = lastAcceptedSample;
+          final isStartupWarmup = acceptedStreamSampleCount < startupWarmupAcceptedSamples;
           final validation = validateSpeedSample(
             speed: position.speed,
             timestamp: position.timestamp,
@@ -116,6 +101,7 @@ class SpeedTracker {
             speedAccuracy: position.speedAccuracy,
             now: _clock(),
             previousAcceptedSample: previousAcceptedSample,
+            enforceAccelerationLimit: !isStartupWarmup,
           );
           final acceptedSample = validation.acceptedSample;
           if (acceptedSample == null) {
@@ -123,10 +109,14 @@ class SpeedTracker {
           }
 
           lastAcceptedSample = acceptedSample;
+          acceptedStreamSampleCount++;
 
           final double filteredSpeed;
           final existingFilter = kalmanFilter;
-          if (existingFilter == null) {
+          if (acceptedStreamSampleCount <= startupWarmupAcceptedSamples) {
+            kalmanFilter = _createKalmanFilter(acceptedSample);
+            filteredSpeed = acceptedSample.speed;
+          } else if (existingFilter == null) {
             kalmanFilter = _createKalmanFilter(acceptedSample);
             filteredSpeed = acceptedSample.speed;
           } else {
@@ -179,14 +169,6 @@ class SpeedTracker {
     yield* controller.stream;
   }
 
-  Future<Position> _getCurrentPosition(LocationSettings locationSettings) {
-    final currentPositionProvider = _currentPositionProvider;
-    if (currentPositionProvider != null) {
-      return currentPositionProvider(locationSettings);
-    }
-    return Geolocator.getCurrentPosition(locationSettings: locationSettings);
-  }
-
   Stream<Position> _getPositionStream(LocationSettings locationSettings) {
     final positionStreamProvider = _positionStreamProvider;
     if (positionStreamProvider != null) {
@@ -226,6 +208,7 @@ class SpeedTracker {
     required double speedAccuracy,
     required DateTime now,
     AcceptedSpeedSample? previousAcceptedSample,
+    bool enforceAccelerationLimit = true,
   }) {
     if (!speed.isFinite || speed < 0) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidSpeed);
@@ -259,6 +242,10 @@ class SpeedTracker {
         timestamp.difference(previousSample.timestamp).inMicroseconds / Duration.microsecondsPerSecond;
     if (elapsedSeconds <= 0) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.nonIncreasingTimestamp);
+    }
+
+    if (!enforceAccelerationLimit) {
+      return SpeedSampleValidation.accepted(acceptedSample);
     }
 
     final allowedSpeedChange =

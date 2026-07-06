@@ -77,6 +77,7 @@ void main() {
       double horizontalAccuracy = 5,
       double speedAccuracy = 0.5,
       AcceptedSpeedSample? previousAcceptedSample,
+      bool enforceAccelerationLimit = true,
     }) {
       return SpeedTracker.validateSpeedSample(
         speed: speed,
@@ -85,6 +86,7 @@ void main() {
         speedAccuracy: speedAccuracy,
         now: now,
         previousAcceptedSample: previousAcceptedSample,
+        enforceAccelerationLimit: enforceAccelerationLimit,
       );
     }
 
@@ -205,6 +207,26 @@ void main() {
     });
 
     test(
+      'accepts a large one-sample speed spike when acceleration limit is disabled',
+      () {
+        final previousSample = acceptedSample(
+          speed: 10,
+          timestamp: now.subtract(const Duration(seconds: 1)),
+        );
+
+        final validation = validate(
+          speed: 30,
+          previousAcceptedSample: previousSample,
+          enforceAccelerationLimit: false,
+        );
+
+        expect(validation.isAccepted, isTrue);
+        expect(validation.rejectionReason, isNull);
+        expect(validation.acceptedSample?.speed, 30);
+      },
+    );
+
+    test(
       'accepts first valid stream sample when no previous valid sample exists',
       () {
         final validation = validate(speed: 80);
@@ -218,7 +240,7 @@ void main() {
   group('SpeedTracker.stream freshness watchdog', () {
     final now = DateTime.utc(2026, 1, 1, 12);
 
-    test('valid accepted stream sample emits current speed', () async {
+    test('starts from the position stream and emits a current speed', () async {
       final harness = _SpeedTrackerStreamHarness(now: now);
       addTearDown(harness.dispose);
 
@@ -229,6 +251,112 @@ void main() {
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.status, SpeedStatus.current);
       expect(harness.emittedSpeeds.single.value, 10);
+    });
+
+    test(
+      'emits startup speed jumps during warm-up instead of rejecting them',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        harness
+          ..addPosition(
+            _position(
+              speed: 0,
+              timestamp: now.subtract(const Duration(seconds: 2)),
+            ),
+          )
+          ..addPosition(
+            _position(
+              speed: 30,
+              timestamp: now.subtract(const Duration(seconds: 1)),
+            ),
+          );
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds.map((speed) => speed.value), [0, 30]);
+      },
+    );
+
+    test(
+      'warm-up samples use raw speed instead of Kalman-smoothed speed',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        harness
+          ..addPosition(
+            _position(
+              speed: 0,
+              timestamp: now.subtract(const Duration(seconds: 2)),
+            ),
+          )
+          ..addPosition(
+            _position(
+              speed: 30,
+              timestamp: now.subtract(const Duration(seconds: 1)),
+            ),
+          );
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds.last.value, 30);
+      },
+    );
+
+    test('re-enables acceleration rejection after warm-up samples', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness
+        ..addPosition(
+          _position(
+            speed: 0,
+            timestamp: now.subtract(const Duration(seconds: 3)),
+          ),
+        )
+        ..addPosition(
+          _position(
+            speed: 30,
+            timestamp: now.subtract(const Duration(seconds: 2)),
+          ),
+        )
+        ..addPosition(
+          _position(
+            speed: 30.5,
+            timestamp: now.subtract(const Duration(seconds: 1)),
+          ),
+        )
+        ..addPosition(_position(speed: 100, timestamp: now));
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds.map((speed) => speed.value), [0, 30, 30.5]);
+    });
+
+    test('keeps basic validation active during warm-up', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness
+        ..addPosition(_position(speed: -1, timestamp: now))
+        ..addPosition(
+          _position(
+            speed: 10,
+            timestamp: now.subtract(const Duration(seconds: 6)),
+          ),
+        )
+        ..addPosition(
+          _position(speed: 10, timestamp: now.add(const Duration(seconds: 2))),
+        )
+        ..addPosition(_position(speed: 10, timestamp: now, accuracy: 50.1))
+        ..addPosition(_position(speed: 10, timestamp: now))
+        ..addPosition(_position(speed: 12, timestamp: now));
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds.map((speed) => speed.value), [10]);
     });
 
     test('emits unavailable when the accepted sample becomes stale', () async {
@@ -263,7 +391,7 @@ void main() {
             timestamp: now.subtract(SpeedTracker.maxSampleAge),
           ),
         )
-        ..addPosition(_position(speed: 200, timestamp: now));
+        ..addPosition(_position(speed: 10, timestamp: now, accuracy: 50.1));
       await pumpEventQueue();
 
       expect(harness.emittedSpeeds.map((speed) => speed.status), [
@@ -333,8 +461,6 @@ class _SpeedTrackerStreamHarness {
     _speedTracker = SpeedTracker(
       clock: () => now,
       permissionChecker: () async => true,
-      currentPositionProvider: (_) async =>
-          _position(speed: 0, timestamp: now, accuracy: 0),
       positionStreamProvider: (_) {
         if (!_positionStreamRequested.isCompleted) {
           _positionStreamRequested.complete();
