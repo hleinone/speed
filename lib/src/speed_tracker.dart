@@ -19,6 +19,20 @@ class SpeedTracker {
   static const double maxPlausibleAcceleration = 8.0;
   static const double fallbackSpeedConfidence = unknownSpeedConfidence * 0.5;
   static const double _fallbackStationarySpeedEpsilon = 0.2;
+  static const double _fallbackRmsResidualFloor = 1.5;
+  static const double _fallbackMaxRmsResidual = 8.0;
+  static const double _fallbackRmsResidualAccuracyFactor = 0.75;
+  static const double _fallbackMaxResidualFloor = 3.0;
+  static const double _fallbackMaxResidual = 12.0;
+  static const double _fallbackMaxResidualAccuracyFactor = 1.5;
+  static const double _fallbackMinTravelDistance = 5.0;
+  static const double _fallbackTravelResidualFactor = 3.0;
+  static const double _fallbackStationaryClusterFloor = 3.0;
+  static const double _fallbackMinDirectionAlignment = 0.5;
+  static const double _fallbackMaxSegmentSpeedFactor = 3.0;
+  static const double _fallbackSegmentSpeedAccuracyFactor = 2.0;
+  static const double _fallbackConfirmationMinTolerance = 1.0;
+  static const double _fallbackConfirmationSpeedFactor = 0.35;
   static const Duration maxSampleAge = Duration(seconds: 5);
   static const Duration positionUpdateInterval = Duration(seconds: 1);
   static const Duration freshnessTimeout = Duration(seconds: 10);
@@ -259,15 +273,28 @@ class SpeedTracker {
         })
         .toList(growable: false);
 
-    final xVelocity = _weightedSlope(regressionPoints, (point) => point.x);
-    final yVelocity = _weightedSlope(regressionPoints, (point) => point.y);
-    if (xVelocity == null || yVelocity == null) {
+    final regression = _fitFallbackRegression(regressionPoints);
+    if (regression == null) {
       return null;
     }
 
-    final fittedSpeed = sqrt((xVelocity * xVelocity) + (yVelocity * yVelocity));
-    final speed = fittedSpeed < _fallbackStationarySpeedEpsilon ? 0.0 : fittedSpeed;
+    final medianHorizontalAccuracy = _medianHorizontalAccuracy(samples);
+    final fittedSpeed = sqrt((regression.xSlope * regression.xSlope) + (regression.ySlope * regression.ySlope));
     final elapsedSeconds = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
+    if (fittedSpeed < _fallbackStationarySpeedEpsilon) {
+      if (!_isStationaryFallbackCluster(regressionPoints, medianHorizontalAccuracy)) {
+        return null;
+      }
+    } else {
+      if (!_hasAcceptableFallbackFit(regression, medianHorizontalAccuracy, fittedSpeed * elapsedSeconds)) {
+        return null;
+      }
+      if (!_hasConsistentFallbackSegments(regressionPoints, regression, fittedSpeed)) {
+        return null;
+      }
+    }
+
+    final speed = fittedSpeed < _fallbackStationarySpeedEpsilon ? 0.0 : fittedSpeed;
     final speedAccuracy = SpeedAccuracyEstimate(
       standardDeviation: max(
         fallbackSpeedAccuracy,
@@ -280,7 +307,40 @@ class SpeedTracker {
     return _FallbackSpeedEstimate(speed: speed, speedAccuracy: speedAccuracy);
   }
 
-  static double? _weightedSlope(
+  static _FallbackRegressionResult? _fitFallbackRegression(List<_FallbackRegressionPoint> points) {
+    final xRegression = _weightedLinearRegression(points, (point) => point.x);
+    final yRegression = _weightedLinearRegression(points, (point) => point.y);
+    if (xRegression == null || yRegression == null) {
+      return null;
+    }
+
+    var weightSum = 0.0;
+    var weightedSquaredResidualSum = 0.0;
+    var maxResidual = 0.0;
+    for (final point in points) {
+      final xResidual = point.x - xRegression.valueAt(point.t);
+      final yResidual = point.y - yRegression.valueAt(point.t);
+      final residual = sqrt((xResidual * xResidual) + (yResidual * yResidual));
+      weightSum += point.weight;
+      weightedSquaredResidualSum += point.weight * residual * residual;
+      maxResidual = max(maxResidual, residual);
+    }
+
+    if (weightSum <= 0) {
+      return null;
+    }
+
+    return _FallbackRegressionResult(
+      xSlope: xRegression.slope,
+      xIntercept: xRegression.intercept,
+      ySlope: yRegression.slope,
+      yIntercept: yRegression.intercept,
+      weightedRmsResidual: sqrt(weightedSquaredResidualSum / weightSum),
+      maxResidual: maxResidual,
+    );
+  }
+
+  static _FallbackAxisRegression? _weightedLinearRegression(
     List<_FallbackRegressionPoint> points,
     double Function(_FallbackRegressionPoint) value,
   ) {
@@ -310,7 +370,102 @@ class SpeedTracker {
     if (variance <= 0) {
       return null;
     }
-    return covariance / variance;
+    final slope = covariance / variance;
+    return _FallbackAxisRegression(slope: slope, intercept: meanValue - (slope * meanTime));
+  }
+
+  static bool _hasAcceptableFallbackFit(
+    _FallbackRegressionResult regression,
+    double medianHorizontalAccuracy,
+    double fittedTravelDistance,
+  ) {
+    final rmsResidualLimit = min(
+      _fallbackMaxRmsResidual,
+      max(_fallbackRmsResidualFloor, medianHorizontalAccuracy * _fallbackRmsResidualAccuracyFactor),
+    );
+    if (regression.weightedRmsResidual > rmsResidualLimit) {
+      return false;
+    }
+
+    final maxResidualLimit = min(
+      _fallbackMaxResidual,
+      max(_fallbackMaxResidualFloor, medianHorizontalAccuracy * _fallbackMaxResidualAccuracyFactor),
+    );
+    if (regression.maxResidual > maxResidualLimit) {
+      return false;
+    }
+
+    final minTravelDistance = max(
+      _fallbackMinTravelDistance,
+      regression.weightedRmsResidual * _fallbackTravelResidualFactor,
+    );
+    return fittedTravelDistance >= minTravelDistance;
+  }
+
+  static bool _hasConsistentFallbackSegments(
+    List<_FallbackRegressionPoint> points,
+    _FallbackRegressionResult regression,
+    double fittedSpeed,
+  ) {
+    final directionX = regression.xSlope / fittedSpeed;
+    final directionY = regression.ySlope / fittedSpeed;
+    final maxSegmentSpeed = max(
+      fittedSpeed * _fallbackMaxSegmentSpeedFactor,
+      fittedSpeed + (fallbackSpeedAccuracy * _fallbackSegmentSpeedAccuracyFactor),
+    );
+    final segmentCount = points.length - 1;
+    final requiredAlignedSegments = max(3, (segmentCount * 0.75).ceil());
+    var alignedSegments = 0;
+
+    for (var i = 1; i < points.length; i++) {
+      final previous = points[i - 1];
+      final current = points[i];
+      final elapsedSeconds = current.t - previous.t;
+      if (elapsedSeconds <= 0) {
+        return false;
+      }
+
+      final xVelocity = (current.x - previous.x) / elapsedSeconds;
+      final yVelocity = (current.y - previous.y) / elapsedSeconds;
+      final segmentSpeed = sqrt((xVelocity * xVelocity) + (yVelocity * yVelocity));
+      if (segmentSpeed > maxSegmentSpeed) {
+        return false;
+      }
+
+      if (segmentSpeed > 0) {
+        final alignment = ((xVelocity * directionX) + (yVelocity * directionY)) / segmentSpeed;
+        if (alignment >= _fallbackMinDirectionAlignment) {
+          alignedSegments++;
+        }
+      }
+    }
+
+    return alignedSegments >= requiredAlignedSegments;
+  }
+
+  static bool _isStationaryFallbackCluster(List<_FallbackRegressionPoint> points, double medianHorizontalAccuracy) {
+    final maxClusterSpan = max(_fallbackStationaryClusterFloor, medianHorizontalAccuracy);
+    for (var i = 0; i < points.length; i++) {
+      final first = points[i];
+      for (var j = i + 1; j < points.length; j++) {
+        final second = points[j];
+        final xDelta = second.x - first.x;
+        final yDelta = second.y - first.y;
+        if (sqrt((xDelta * xDelta) + (yDelta * yDelta)) > maxClusterSpan) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  static double _medianHorizontalAccuracy(List<_ValidPositionSample> samples) {
+    final accuracies = samples.map((sample) => sample.horizontalAccuracy).toList(growable: false)..sort();
+    final middle = accuracies.length ~/ 2;
+    if (accuracies.length.isOdd) {
+      return accuracies[middle];
+    }
+    return (accuracies[middle - 1] + accuracies[middle]) / 2;
   }
 
   static SpeedAccuracyEstimate normalizeSpeedAccuracy(double speedAccuracy) {
@@ -452,6 +607,7 @@ class _SpeedSampleProcessor {
   var _acceptedStreamSampleCount = 0;
   KalmanFilter? _kalmanFilter;
   AcceptedSpeedSample? _lastAcceptedSample;
+  AcceptedSpeedSample? _pendingFallbackSample;
 
   _SpeedSampleProcessor({required this.processNoise});
 
@@ -475,12 +631,20 @@ class _SpeedSampleProcessor {
       enforceAccelerationLimit: !_isStartupWarmup,
     );
     if (validation == null) {
+      if (SpeedTracker._hasAmbiguousZeroSpeed(position)) {
+        _pendingFallbackSample = null;
+      }
       return null;
     }
 
     final acceptedSample = validation.acceptedSample;
     if (acceptedSample == null) {
+      _pendingFallbackSample = null;
       _removeRejectedFallbackOutlier(position, validation, addedToFallbackWindow);
+      return null;
+    }
+
+    if (!_shouldEmitAcceptedSample(acceptedSample, previousAcceptedSample)) {
       return null;
     }
 
@@ -496,6 +660,33 @@ class _SpeedSampleProcessor {
   }
 
   bool get _isStartupWarmup => _acceptedStreamSampleCount < SpeedTracker.startupWarmupAcceptedSamples;
+
+  bool _shouldEmitAcceptedSample(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample? previousAcceptedSample) {
+    if (acceptedSample.source == SpeedSampleSource.platform ||
+        acceptedSample.speed == 0 ||
+        previousAcceptedSample != null) {
+      _pendingFallbackSample = null;
+      return true;
+    }
+
+    final pendingFallbackSample = _pendingFallbackSample;
+    if (pendingFallbackSample == null) {
+      _pendingFallbackSample = acceptedSample;
+      return false;
+    }
+
+    final tolerance = max(
+      SpeedTracker._fallbackConfirmationMinTolerance,
+      pendingFallbackSample.speed * SpeedTracker._fallbackConfirmationSpeedFactor,
+    );
+    if ((acceptedSample.speed - pendingFallbackSample.speed).abs() <= tolerance) {
+      _pendingFallbackSample = null;
+      return true;
+    }
+
+    _pendingFallbackSample = acceptedSample;
+    return false;
+  }
 
   void _removeRejectedFallbackOutlier(Position position, SpeedSampleValidation validation, bool addedToFallbackWindow) {
     if (validation.rejectionReason == SpeedSampleRejectionReason.implausibleAcceleration &&
@@ -577,6 +768,33 @@ class _FallbackSpeedEstimate {
   final SpeedAccuracyEstimate speedAccuracy;
 
   const _FallbackSpeedEstimate({required this.speed, required this.speedAccuracy});
+}
+
+class _FallbackRegressionResult {
+  final double xSlope;
+  final double xIntercept;
+  final double ySlope;
+  final double yIntercept;
+  final double weightedRmsResidual;
+  final double maxResidual;
+
+  const _FallbackRegressionResult({
+    required this.xSlope,
+    required this.xIntercept,
+    required this.ySlope,
+    required this.yIntercept,
+    required this.weightedRmsResidual,
+    required this.maxResidual,
+  });
+}
+
+class _FallbackAxisRegression {
+  final double slope;
+  final double intercept;
+
+  const _FallbackAxisRegression({required this.slope, required this.intercept});
+
+  double valueAt(double t) => intercept + (slope * t);
 }
 
 class _FallbackRegressionPoint {
