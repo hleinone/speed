@@ -16,7 +16,7 @@ class SpeedTracker {
   static const Duration maxSampleAge = Duration(seconds: 5);
   static const Duration maxFutureSampleSkew = Duration(seconds: 1);
 
-  /// Process noise for the Kalman filter. A lower value means more smoothing but less responsiveness.
+  /// Process noise per second for the Kalman filter. A lower value means more smoothing but less responsiveness.
   final double processNoise;
 
   SpeedTracker({this.processNoise = 0.1});
@@ -62,13 +62,14 @@ class SpeedTracker {
     void onListen() {
       positionStreamSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
         (position) {
+          final previousAcceptedSample = lastAcceptedSample;
           final validation = validateSpeedSample(
             speed: position.speed,
             timestamp: position.timestamp,
             horizontalAccuracy: position.accuracy,
             speedAccuracy: position.speedAccuracy,
             now: DateTime.now(),
-            previousAcceptedSample: lastAcceptedSample,
+            previousAcceptedSample: previousAcceptedSample,
           );
           final acceptedSample = validation.acceptedSample;
           if (acceptedSample == null) {
@@ -83,8 +84,15 @@ class SpeedTracker {
             kalmanFilter = _createKalmanFilter(acceptedSample);
             filteredSpeed = acceptedSample.speed;
           } else {
+            final elapsedTime = previousAcceptedSample == null
+                ? const Duration(seconds: 1)
+                : acceptedSample.timestamp.difference(previousAcceptedSample.timestamp);
             // Update the filter with the new measurement.
-            filteredSpeed = existingFilter.update(acceptedSample.speed, acceptedSample.speedAccuracy.measurementNoise);
+            filteredSpeed = existingFilter.update(
+              acceptedSample.speed,
+              acceptedSample.speedAccuracy.measurementNoise,
+              elapsedTime: elapsedTime,
+            );
           }
 
           // Use the same combined accuracy logic as before.

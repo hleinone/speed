@@ -4,16 +4,15 @@ class KalmanFilter {
   final double processNoise;
   final double initialMeasurementNoise;
 
-  KalmanFilter({
-    required double initialMeasurement,
-    this.initialMeasurementNoise = 4.0,
-    this.processNoise = 1.0,
-  }) : _estimate = initialMeasurement,
-       _errorCovariance = initialMeasurementNoise;
+  KalmanFilter({required double initialMeasurement, this.initialMeasurementNoise = 4.0, this.processNoise = 1.0})
+    : _estimate = initialMeasurement,
+      _errorCovariance = initialMeasurementNoise;
 
-  double update(double measurement, double measurementNoise) {
+  double update(double measurement, double measurementNoise, {Duration elapsedTime = const Duration(seconds: 1)}) {
     // Prediction update
-    _errorCovariance += processNoise;
+    final elapsedMicroseconds = elapsedTime.inMicroseconds;
+    final elapsedSeconds = elapsedMicroseconds <= 0 ? 0.0 : elapsedMicroseconds / Duration.microsecondsPerSecond;
+    _errorCovariance += processNoise * elapsedSeconds;
 
     // Measurement update
     final kalmanGain = _errorCovariance / (_errorCovariance + measurementNoise);
