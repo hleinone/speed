@@ -10,7 +10,11 @@ class SpeedTracker {
   static const double fallbackSpeedAccuracy = 2.0;
   static const double unknownSpeedConfidence = 0.25;
   static const double maxSpeedAccuracyError = 5.0;
-  static const double maxHorizontalAccuracyError = 50.0;
+  static const double maxAcceptedHorizontalAccuracy = 50.0;
+  static const double maxHorizontalAccuracyError = maxAcceptedHorizontalAccuracy;
+  static const double maxPlausibleAcceleration = 8.0;
+  static const Duration maxSampleAge = Duration(seconds: 5);
+  static const Duration maxFutureSampleSkew = Duration(seconds: 1);
 
   /// Process noise for the Kalman filter. A lower value means more smoothing but less responsiveness.
   final double processNoise;
@@ -22,7 +26,8 @@ class SpeedTracker {
     StreamSubscription<Position>? positionStreamSubscription;
 
     /// The Kalman filter instance for smoothing speed.
-    late final KalmanFilter kalmanFilter;
+    KalmanFilter? kalmanFilter;
+    AcceptedSpeedSample? lastAcceptedSample;
 
     final LocationSettings locationSettings;
 
@@ -41,29 +46,51 @@ class SpeedTracker {
     }
 
     final initialPosition = await Geolocator.getCurrentPosition(locationSettings: locationSettings);
-    final initialSpeedAccuracy = normalizeSpeedAccuracy(initialPosition.speedAccuracy);
-    // Initialize the filter with the first measurement.
-    kalmanFilter = KalmanFilter(
-      initialMeasurement: initialPosition.speed, // Initial state is the first measured speed.
-      initialMeasurementNoise: initialSpeedAccuracy.measurementNoise,
-      processNoise: processNoise,
+    final initialValidation = validateSpeedSample(
+      speed: initialPosition.speed,
+      timestamp: initialPosition.timestamp,
+      horizontalAccuracy: initialPosition.accuracy,
+      speedAccuracy: initialPosition.speedAccuracy,
+      now: DateTime.now(),
     );
+    final initialSample = initialValidation.acceptedSample;
+    if (initialSample != null) {
+      lastAcceptedSample = initialSample;
+      kalmanFilter = _createKalmanFilter(initialSample);
+    }
 
     void onListen() {
       positionStreamSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
         (position) {
-          final rawSpeed = position.speed;
-          double filteredSpeed;
+          final validation = validateSpeedSample(
+            speed: position.speed,
+            timestamp: position.timestamp,
+            horizontalAccuracy: position.accuracy,
+            speedAccuracy: position.speedAccuracy,
+            now: DateTime.now(),
+            previousAcceptedSample: lastAcceptedSample,
+          );
+          final acceptedSample = validation.acceptedSample;
+          if (acceptedSample == null) {
+            return;
+          }
 
-          final speedAccuracy = normalizeSpeedAccuracy(position.speedAccuracy);
+          lastAcceptedSample = acceptedSample;
 
-          // Update the filter with the new measurement.
-          filteredSpeed = kalmanFilter.update(rawSpeed, speedAccuracy.measurementNoise);
+          final double filteredSpeed;
+          final existingFilter = kalmanFilter;
+          if (existingFilter == null) {
+            kalmanFilter = _createKalmanFilter(acceptedSample);
+            filteredSpeed = acceptedSample.speed;
+          } else {
+            // Update the filter with the new measurement.
+            filteredSpeed = existingFilter.update(acceptedSample.speed, acceptedSample.speedAccuracy.measurementNoise);
+          }
 
           // Use the same combined accuracy logic as before.
-          final double speedConfidence = speedAccuracy.confidence;
+          final double speedConfidence = acceptedSample.speedAccuracy.confidence;
           final double positionConfidence =
-              1.0 - (min(position.accuracy, maxHorizontalAccuracyError) / maxHorizontalAccuracyError);
+              1.0 - (min(acceptedSample.horizontalAccuracy, maxHorizontalAccuracyError) / maxHorizontalAccuracyError);
           final double finalAccuracy = speedConfidence * positionConfidence;
 
           if (!controller.isClosed) {
@@ -98,6 +125,14 @@ class SpeedTracker {
     yield* controller.stream;
   }
 
+  KalmanFilter _createKalmanFilter(AcceptedSpeedSample sample) {
+    return KalmanFilter(
+      initialMeasurement: sample.speed,
+      initialMeasurementNoise: sample.speedAccuracy.measurementNoise,
+      processNoise: processNoise,
+    );
+  }
+
   static SpeedAccuracyEstimate normalizeSpeedAccuracy(double speedAccuracy) {
     if (speedAccuracy.isFinite && speedAccuracy > 0) {
       return SpeedAccuracyEstimate(
@@ -112,6 +147,59 @@ class SpeedTracker {
       confidence: unknownSpeedConfidence,
       isKnown: false,
     );
+  }
+
+  static SpeedSampleValidation validateSpeedSample({
+    required double speed,
+    required DateTime timestamp,
+    required double horizontalAccuracy,
+    required double speedAccuracy,
+    required DateTime now,
+    AcceptedSpeedSample? previousAcceptedSample,
+  }) {
+    if (!speed.isFinite || speed < 0) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidSpeed);
+    }
+
+    if (timestamp.difference(now) > maxFutureSampleSkew) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.futureTimestamp);
+    }
+
+    if (now.difference(timestamp) > maxSampleAge) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.staleTimestamp);
+    }
+
+    if (!horizontalAccuracy.isFinite || horizontalAccuracy <= 0 || horizontalAccuracy > maxAcceptedHorizontalAccuracy) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidHorizontalAccuracy);
+    }
+
+    final normalizedSpeedAccuracy = normalizeSpeedAccuracy(speedAccuracy);
+    final acceptedSample = AcceptedSpeedSample(
+      speed: speed,
+      timestamp: timestamp,
+      horizontalAccuracy: horizontalAccuracy,
+      speedAccuracy: normalizedSpeedAccuracy,
+    );
+    final previousSample = previousAcceptedSample;
+    if (previousSample == null) {
+      return SpeedSampleValidation.accepted(acceptedSample);
+    }
+
+    final elapsedSeconds =
+        timestamp.difference(previousSample.timestamp).inMicroseconds / Duration.microsecondsPerSecond;
+    if (elapsedSeconds <= 0) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.nonIncreasingTimestamp);
+    }
+
+    final allowedSpeedChange =
+        (maxPlausibleAcceleration * elapsedSeconds) +
+        previousSample.speedAccuracy.standardDeviation +
+        normalizedSpeedAccuracy.standardDeviation;
+    if ((speed - previousSample.speed).abs() > allowedSpeedChange) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.implausibleAcceleration);
+    }
+
+    return SpeedSampleValidation.accepted(acceptedSample);
   }
 
   Future<bool> _checkPermissions() async {
@@ -138,6 +226,40 @@ class SpeedTracker {
 
     return accuracy == LocationAccuracyStatus.precise;
   }
+}
+
+class AcceptedSpeedSample {
+  final double speed;
+  final DateTime timestamp;
+  final double horizontalAccuracy;
+  final SpeedAccuracyEstimate speedAccuracy;
+
+  const AcceptedSpeedSample({
+    required this.speed,
+    required this.timestamp,
+    required this.horizontalAccuracy,
+    required this.speedAccuracy,
+  });
+}
+
+class SpeedSampleValidation {
+  final AcceptedSpeedSample? acceptedSample;
+  final SpeedSampleRejectionReason? rejectionReason;
+
+  const SpeedSampleValidation.accepted(this.acceptedSample) : rejectionReason = null, assert(acceptedSample != null);
+
+  const SpeedSampleValidation.rejected(this.rejectionReason) : acceptedSample = null, assert(rejectionReason != null);
+
+  bool get isAccepted => acceptedSample != null;
+}
+
+enum SpeedSampleRejectionReason {
+  invalidSpeed,
+  staleTimestamp,
+  futureTimestamp,
+  invalidHorizontalAccuracy,
+  nonIncreasingTimestamp,
+  implausibleAcceleration,
 }
 
 class SpeedAccuracyEstimate {
