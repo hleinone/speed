@@ -18,13 +18,10 @@ class SpeedTracker {
   static const double maxHorizontalAccuracyError = maxAcceptedHorizontalAccuracy;
   static const double maxPlausibleAcceleration = 8.0;
   static const double fallbackSpeedConfidence = unknownSpeedConfidence * 0.5;
-  static const double minFallbackStationaryDeadband = 2.0;
-  static const double maxFallbackStationaryDeadband = 10.0;
   static const double _fallbackStationarySpeedEpsilon = 0.2;
   static const Duration maxSampleAge = Duration(seconds: 5);
   static const Duration positionUpdateInterval = Duration(seconds: 1);
   static const Duration freshnessTimeout = Duration(seconds: 10);
-  static const Duration minFallbackSampleInterval = Duration(milliseconds: 500);
   static const Duration _fallbackRegressionWindow = Duration(seconds: 5);
   static const Duration _minFallbackRegressionSpan = Duration(seconds: 3);
   static const Duration maxFutureSampleSkew = Duration(seconds: 1);
@@ -51,14 +48,9 @@ class SpeedTracker {
     StreamSubscription<Position>? positionStreamSubscription;
     Timer? freshnessTimer;
     SpeedStatus lastEmittedStatus = SpeedStatus.unavailable;
-    var acceptedStreamSampleCount = 0;
-
-    /// The Kalman filter instance for smoothing speed.
-    KalmanFilter? kalmanFilter;
-    AcceptedSpeedSample? lastAcceptedSample;
-    final fallbackPositionSamples = <_ValidPositionSample>[];
 
     final locationSettings = createLocationSettings(defaultTargetPlatform);
+    final speedProcessor = _SpeedSampleProcessor(processNoise: processNoise);
 
     final hasPermission = await (_permissionChecker ?? _checkPermissions)();
     if (!hasPermission) {
@@ -95,76 +87,10 @@ class SpeedTracker {
     void onListen() {
       positionStreamSubscription = _getPositionStream(locationSettings).listen(
         (position) {
-          final now = _clock();
-          final positionSample = _validatePositionSample(position, now);
-          if (positionSample == null) {
-            return;
+          final processedSample = speedProcessor.process(position, _clock());
+          if (processedSample != null) {
+            emitCurrentSpeed(processedSample.speed, processedSample.acceptedSample);
           }
-
-          final addedToFallbackWindow = _appendFallbackPositionSample(fallbackPositionSamples, positionSample);
-          if (!addedToFallbackWindow && _hasAmbiguousZeroSpeed(position)) {
-            return;
-          }
-
-          final previousAcceptedSample = lastAcceptedSample;
-          final isStartupWarmup = acceptedStreamSampleCount < startupWarmupAcceptedSamples;
-          final validation = _resolveSpeedSampleValidation(
-            position: position,
-            positionSample: positionSample,
-            fallbackPositionSamples: fallbackPositionSamples,
-            previousAcceptedSample: previousAcceptedSample,
-            enforceAccelerationLimit: !isStartupWarmup,
-          );
-          if (validation == null) {
-            return;
-          }
-
-          final acceptedSample = validation.acceptedSample;
-          if (acceptedSample == null) {
-            if (validation.rejectionReason == SpeedSampleRejectionReason.implausibleAcceleration &&
-                addedToFallbackWindow &&
-                _hasAmbiguousZeroSpeed(position)) {
-              fallbackPositionSamples.removeLast();
-            }
-            return;
-          }
-
-          lastAcceptedSample = acceptedSample;
-          acceptedStreamSampleCount++;
-
-          final double filteredSpeed;
-          final existingFilter = kalmanFilter;
-          if (acceptedStreamSampleCount <= startupWarmupAcceptedSamples) {
-            kalmanFilter = _createKalmanFilter(acceptedSample);
-            filteredSpeed = acceptedSample.speed;
-          } else if (existingFilter == null) {
-            kalmanFilter = _createKalmanFilter(acceptedSample);
-            filteredSpeed = acceptedSample.speed;
-          } else {
-            final elapsedTime = previousAcceptedSample == null
-                ? const Duration(seconds: 1)
-                : acceptedSample.timestamp.difference(previousAcceptedSample.timestamp);
-            // Update the filter with the new measurement.
-            filteredSpeed = existingFilter.update(
-              acceptedSample.speed,
-              acceptedSample.speedAccuracy.measurementNoise,
-              elapsedTime: elapsedTime,
-            );
-          }
-
-          // Use the same combined accuracy logic as before.
-          final double speedConfidence = acceptedSample.speedAccuracy.confidence;
-          final double positionConfidence =
-              1.0 - (min(acceptedSample.horizontalAccuracy, maxHorizontalAccuracyError) / maxHorizontalAccuracyError);
-          final double finalAccuracy = speedConfidence * positionConfidence;
-
-          emitCurrentSpeed(
-            Speed.current(
-              filteredSpeed.isNegative ? 0 : filteredSpeed, // Ensure speed is not negative
-              finalAccuracy.clamp(0.0, 1.0),
-            ),
-            acceptedSample,
-          );
         },
         onError: (error) {
           if (!controller.isClosed) {
@@ -211,14 +137,6 @@ class SpeedTracker {
       return AppleSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
     }
     return const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
-  }
-
-  KalmanFilter _createKalmanFilter(AcceptedSpeedSample sample) {
-    return KalmanFilter(
-      initialMeasurement: sample.speed,
-      initialMeasurementNoise: sample.speedAccuracy.measurementNoise,
-      processNoise: processNoise,
-    );
   }
 
   static bool _appendFallbackPositionSample(List<_ValidPositionSample> samples, _ValidPositionSample sample) {
@@ -521,6 +439,107 @@ class SpeedTracker {
   }
 }
 
+class _ProcessedSpeedSample {
+  final Speed speed;
+  final AcceptedSpeedSample acceptedSample;
+
+  const _ProcessedSpeedSample({required this.speed, required this.acceptedSample});
+}
+
+class _SpeedSampleProcessor {
+  final double processNoise;
+  final List<_ValidPositionSample> _fallbackPositionSamples = [];
+  var _acceptedStreamSampleCount = 0;
+  KalmanFilter? _kalmanFilter;
+  AcceptedSpeedSample? _lastAcceptedSample;
+
+  _SpeedSampleProcessor({required this.processNoise});
+
+  _ProcessedSpeedSample? process(Position position, DateTime now) {
+    final positionSample = SpeedTracker._validatePositionSample(position, now);
+    if (positionSample == null) {
+      return null;
+    }
+
+    final addedToFallbackWindow = SpeedTracker._appendFallbackPositionSample(_fallbackPositionSamples, positionSample);
+    if (!addedToFallbackWindow && SpeedTracker._hasAmbiguousZeroSpeed(position)) {
+      return null;
+    }
+
+    final previousAcceptedSample = _lastAcceptedSample;
+    final validation = SpeedTracker._resolveSpeedSampleValidation(
+      position: position,
+      positionSample: positionSample,
+      fallbackPositionSamples: _fallbackPositionSamples,
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: !_isStartupWarmup,
+    );
+    if (validation == null) {
+      return null;
+    }
+
+    final acceptedSample = validation.acceptedSample;
+    if (acceptedSample == null) {
+      _removeRejectedFallbackOutlier(position, validation, addedToFallbackWindow);
+      return null;
+    }
+
+    _lastAcceptedSample = acceptedSample;
+    _acceptedStreamSampleCount++;
+
+    final filteredSpeed = _filterSpeed(acceptedSample, previousAcceptedSample);
+    final accuracy = _accuracyFor(acceptedSample);
+    return _ProcessedSpeedSample(
+      speed: Speed.current(filteredSpeed.isNegative ? 0 : filteredSpeed, accuracy.clamp(0.0, 1.0)),
+      acceptedSample: acceptedSample,
+    );
+  }
+
+  bool get _isStartupWarmup => _acceptedStreamSampleCount < SpeedTracker.startupWarmupAcceptedSamples;
+
+  void _removeRejectedFallbackOutlier(Position position, SpeedSampleValidation validation, bool addedToFallbackWindow) {
+    if (validation.rejectionReason == SpeedSampleRejectionReason.implausibleAcceleration &&
+        addedToFallbackWindow &&
+        SpeedTracker._hasAmbiguousZeroSpeed(position)) {
+      _fallbackPositionSamples.removeLast();
+    }
+  }
+
+  double _filterSpeed(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample? previousAcceptedSample) {
+    final existingFilter = _kalmanFilter;
+    if (_acceptedStreamSampleCount <= SpeedTracker.startupWarmupAcceptedSamples || existingFilter == null) {
+      _kalmanFilter = _createKalmanFilter(acceptedSample);
+      return acceptedSample.speed;
+    }
+
+    final elapsedTime = previousAcceptedSample == null
+        ? const Duration(seconds: 1)
+        : acceptedSample.timestamp.difference(previousAcceptedSample.timestamp);
+    return existingFilter.update(
+      acceptedSample.speed,
+      acceptedSample.speedAccuracy.measurementNoise,
+      elapsedTime: elapsedTime,
+    );
+  }
+
+  double _accuracyFor(AcceptedSpeedSample acceptedSample) {
+    final speedConfidence = acceptedSample.speedAccuracy.confidence;
+    final positionConfidence =
+        1.0 -
+        (min(acceptedSample.horizontalAccuracy, SpeedTracker.maxHorizontalAccuracyError) /
+            SpeedTracker.maxHorizontalAccuracyError);
+    return speedConfidence * positionConfidence;
+  }
+
+  KalmanFilter _createKalmanFilter(AcceptedSpeedSample sample) {
+    return KalmanFilter(
+      initialMeasurement: sample.speed,
+      initialMeasurementNoise: sample.speedAccuracy.measurementNoise,
+      processNoise: processNoise,
+    );
+  }
+}
+
 class AcceptedSpeedSample {
   final double speed;
   final DateTime timestamp;
@@ -628,26 +647,15 @@ class Speed {
 }
 
 enum SpeedUnit {
-  kilometersPerHour,
-  milesPerHour,
-  metersPerSecond,
-  footPerSecond,
-  knots;
+  kilometersPerHour(3.600000),
+  milesPerHour(2.236936),
+  metersPerSecond(1),
+  footPerSecond(3.280840),
+  knots(1.943844);
 
-  double get _factor {
-    switch (this) {
-      case SpeedUnit.kilometersPerHour:
-        return 3.600000;
-      case SpeedUnit.milesPerHour:
-        return 2.236936;
-      case SpeedUnit.metersPerSecond:
-        return 1;
-      case SpeedUnit.footPerSecond:
-        return 3.280840;
-      case SpeedUnit.knots:
-        return 1.943844;
-    }
-  }
+  final double _factor;
+
+  const SpeedUnit(this._factor);
 
   String title(BuildContext context) {
     switch (this) {
