@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:speed/src/speed_tracker.dart';
@@ -237,6 +239,27 @@ void main() {
     );
   });
 
+  group('SpeedTracker.createLocationSettings', () {
+    test(
+      'requests one-second Android position updates without a stream time limit',
+      () {
+        final locationSettings = SpeedTracker.createLocationSettings(
+          TargetPlatform.android,
+        );
+
+        expect(locationSettings, isA<AndroidSettings>());
+        final androidSettings = locationSettings as AndroidSettings;
+        expect(androidSettings.accuracy, LocationAccuracy.bestForNavigation);
+        expect(androidSettings.distanceFilter, 0);
+        expect(
+          androidSettings.intervalDuration,
+          SpeedTracker.positionUpdateInterval,
+        );
+        expect(androidSettings.timeLimit, isNull);
+      },
+    );
+  });
+
   group('SpeedTracker.stream freshness watchdog', () {
     final now = DateTime.utc(2026, 1, 1, 12);
 
@@ -359,71 +382,136 @@ void main() {
       expect(harness.emittedSpeeds.map((speed) => speed.value), [10]);
     });
 
-    test('emits unavailable when the accepted sample becomes stale', () async {
-      final harness = _SpeedTrackerStreamHarness(now: now);
-      addTearDown(harness.dispose);
+    test('does not emit unavailable before the freshness timeout', () {
+      fakeAsync((async) {
+        final harness = _SpeedTrackerStreamHarness(
+          now: now,
+          clock: async.getClock(now).now,
+        );
 
-      await harness.start();
-      harness.addPosition(
-        _position(
-          speed: 10,
-          timestamp: now.subtract(SpeedTracker.maxSampleAge),
-        ),
-      );
-      await pumpEventQueue();
+        harness.startListening();
+        async.flushMicrotasks();
+        harness.addPosition(_position(speed: 10, timestamp: now));
+        async.flushMicrotasks();
 
-      expect(harness.emittedSpeeds.map((speed) => speed.status), [
-        SpeedStatus.current,
-        SpeedStatus.unavailable,
-      ]);
-      expect(harness.emittedSpeeds.last.accuracy, 0);
+        async.elapse(
+          SpeedTracker.freshnessTimeout - const Duration(milliseconds: 1),
+        );
+        async.flushMicrotasks();
+
+        unawaited(harness.dispose());
+        async.flushMicrotasks();
+
+        expect(harness.emittedSpeeds.map((speed) => speed.status), [
+          SpeedStatus.current,
+        ]);
+      });
     });
 
-    test('rejected samples do not postpone the stale timeout', () async {
-      final harness = _SpeedTrackerStreamHarness(now: now);
-      addTearDown(harness.dispose);
+    test('emits unavailable when the freshness timeout elapses', () {
+      fakeAsync((async) {
+        final harness = _SpeedTrackerStreamHarness(
+          now: now,
+          clock: async.getClock(now).now,
+        );
 
-      await harness.start();
-      harness
-        ..addPosition(
-          _position(
-            speed: 10,
-            timestamp: now.subtract(SpeedTracker.maxSampleAge),
-          ),
-        )
-        ..addPosition(_position(speed: 10, timestamp: now, accuracy: 50.1));
-      await pumpEventQueue();
+        harness.startListening();
+        async.flushMicrotasks();
+        harness.addPosition(_position(speed: 10, timestamp: now));
+        async.flushMicrotasks();
 
-      expect(harness.emittedSpeeds.map((speed) => speed.status), [
-        SpeedStatus.current,
-        SpeedStatus.unavailable,
-      ]);
+        async.elapse(SpeedTracker.freshnessTimeout);
+        async.flushMicrotasks();
+
+        unawaited(harness.dispose());
+        async.flushMicrotasks();
+
+        expect(harness.emittedSpeeds.map((speed) => speed.status), [
+          SpeedStatus.current,
+          SpeedStatus.unavailable,
+        ]);
+        expect(harness.emittedSpeeds.last.accuracy, 0);
+      });
     });
 
-    test('new accepted samples postpone a pending stale timeout', () async {
-      final harness = _SpeedTrackerStreamHarness(now: now);
-      addTearDown(harness.dispose);
+    test('rejected samples do not postpone the freshness timeout', () {
+      fakeAsync((async) {
+        final harness = _SpeedTrackerStreamHarness(
+          now: now,
+          clock: async.getClock(now).now,
+        );
 
-      await harness.start();
-      harness
-        ..addPosition(
+        harness.startListening();
+        async.flushMicrotasks();
+        harness.addPosition(_position(speed: 10, timestamp: now));
+        async.flushMicrotasks();
+
+        async.elapse(const Duration(seconds: 5));
+        harness.addPosition(
           _position(
             speed: 10,
-            timestamp: now.subtract(SpeedTracker.maxSampleAge),
-          ),
-        )
-        ..addPosition(
-          _position(
-            speed: 10.1,
-            timestamp: now.subtract(const Duration(seconds: 4)),
+            timestamp: now.add(const Duration(seconds: 5)),
+            accuracy: 50.1,
           ),
         );
-      await pumpEventQueue();
+        async.flushMicrotasks();
 
-      expect(harness.emittedSpeeds.map((speed) => speed.status), [
-        SpeedStatus.current,
-        SpeedStatus.current,
-      ]);
+        async.elapse(const Duration(seconds: 5));
+        async.flushMicrotasks();
+
+        unawaited(harness.dispose());
+        async.flushMicrotasks();
+
+        expect(harness.emittedSpeeds.map((speed) => speed.status), [
+          SpeedStatus.current,
+          SpeedStatus.unavailable,
+        ]);
+      });
+    });
+
+    test('new accepted samples postpone a pending freshness timeout', () {
+      fakeAsync((async) {
+        final harness = _SpeedTrackerStreamHarness(
+          now: now,
+          clock: async.getClock(now).now,
+        );
+
+        harness.startListening();
+        async.flushMicrotasks();
+        harness.addPosition(_position(speed: 10, timestamp: now));
+        async.flushMicrotasks();
+
+        async.elapse(const Duration(seconds: 5));
+        harness.addPosition(
+          _position(
+            speed: 10.1,
+            timestamp: now.add(const Duration(seconds: 5)),
+          ),
+        );
+        async.flushMicrotasks();
+
+        async.elapse(
+          SpeedTracker.freshnessTimeout - const Duration(milliseconds: 1),
+        );
+        async.flushMicrotasks();
+
+        expect(harness.emittedSpeeds.map((speed) => speed.status), [
+          SpeedStatus.current,
+          SpeedStatus.current,
+        ]);
+
+        async.elapse(const Duration(milliseconds: 1));
+        async.flushMicrotasks();
+
+        unawaited(harness.dispose());
+        async.flushMicrotasks();
+
+        expect(harness.emittedSpeeds.map((speed) => speed.status), [
+          SpeedStatus.current,
+          SpeedStatus.current,
+          SpeedStatus.unavailable,
+        ]);
+      });
     });
   });
 }
@@ -449,17 +537,18 @@ Position _position({
 }
 
 class _SpeedTrackerStreamHarness {
-  final DateTime now;
+  final SpeedTrackerClock _clock;
   final StreamController<Position> _positionController;
   final Completer<void> _positionStreamRequested = Completer<void>();
   final List<Speed> emittedSpeeds = [];
   late final SpeedTracker _speedTracker;
   StreamSubscription<Speed>? _subscription;
 
-  _SpeedTrackerStreamHarness({required this.now})
-    : _positionController = StreamController<Position>(sync: true) {
+  _SpeedTrackerStreamHarness({required DateTime now, SpeedTrackerClock? clock})
+    : _clock = clock ?? (() => now),
+      _positionController = StreamController<Position>(sync: true) {
     _speedTracker = SpeedTracker(
-      clock: () => now,
+      clock: _clock,
       permissionChecker: () async => true,
       positionStreamProvider: (_) {
         if (!_positionStreamRequested.isCompleted) {
@@ -471,8 +560,12 @@ class _SpeedTrackerStreamHarness {
   }
 
   Future<void> start() async {
-    _subscription = _speedTracker.stream.listen(emittedSpeeds.add);
+    startListening();
     await _positionStreamRequested.future;
+  }
+
+  void startListening() {
+    _subscription = _speedTracker.stream.listen(emittedSpeeds.add);
   }
 
   void addPosition(Position position) {

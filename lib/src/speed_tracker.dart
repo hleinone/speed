@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:speed/src/generated/l10n/l10n.dart';
@@ -18,6 +18,8 @@ class SpeedTracker {
   static const double maxHorizontalAccuracyError = maxAcceptedHorizontalAccuracy;
   static const double maxPlausibleAcceleration = 8.0;
   static const Duration maxSampleAge = Duration(seconds: 5);
+  static const Duration positionUpdateInterval = Duration(seconds: 1);
+  static const Duration freshnessTimeout = Duration(seconds: 10);
   static const Duration maxFutureSampleSkew = Duration(seconds: 1);
   static const int startupWarmupAcceptedSamples = 3;
 
@@ -47,15 +49,7 @@ class SpeedTracker {
     KalmanFilter? kalmanFilter;
     AcceptedSpeedSample? lastAcceptedSample;
 
-    final LocationSettings locationSettings;
-
-    if (Platform.isAndroid) {
-      locationSettings = AndroidSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
-    } else if (Platform.isIOS || Platform.isMacOS) {
-      locationSettings = AppleSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
-    } else {
-      locationSettings = const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
-    }
+    final locationSettings = createLocationSettings(defaultTargetPlatform);
 
     final hasPermission = await (_permissionChecker ?? _checkPermissions)();
     if (!hasPermission) {
@@ -75,7 +69,7 @@ class SpeedTracker {
     void scheduleFreshnessWatchdog(AcceptedSpeedSample sample) {
       freshnessTimer?.cancel();
       final age = _clock().difference(sample.timestamp);
-      final delay = maxSampleAge - age;
+      final delay = freshnessTimeout - age;
       freshnessTimer = Timer(delay.isNegative ? Duration.zero : delay, emitUnavailable);
     }
 
@@ -177,6 +171,21 @@ class SpeedTracker {
     return Geolocator.getPositionStream(locationSettings: locationSettings);
   }
 
+  @visibleForTesting
+  static LocationSettings createLocationSettings(TargetPlatform platform) {
+    if (platform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+        intervalDuration: positionUpdateInterval,
+      );
+    }
+    if (platform == TargetPlatform.iOS || platform == TargetPlatform.macOS) {
+      return AppleSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
+    }
+    return const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
+  }
+
   KalmanFilter _createKalmanFilter(AcceptedSpeedSample sample) {
     return KalmanFilter(
       initialMeasurement: sample.speed,
@@ -260,6 +269,7 @@ class SpeedTracker {
   }
 
   Future<bool> _checkPermissions() async {
+    final platform = defaultTargetPlatform;
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -271,11 +281,11 @@ class SpeedTracker {
     }
 
     var accuracy = LocationAccuracyStatus.precise;
-    if (Platform.isAndroid || Platform.isIOS) {
+    if (platform == TargetPlatform.android || platform == TargetPlatform.iOS) {
       accuracy = await Geolocator.getLocationAccuracy();
     }
 
-    if (Platform.isIOS && accuracy == LocationAccuracyStatus.reduced) {
+    if (platform == TargetPlatform.iOS && accuracy == LocationAccuracyStatus.reduced) {
       accuracy = await Geolocator.requestTemporaryFullAccuracy(purposeKey: 'SpeedPurposeKey');
     }
 
