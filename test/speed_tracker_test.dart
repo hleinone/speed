@@ -260,6 +260,224 @@ void main() {
     );
   });
 
+  group('SpeedTracker.stream position-delta fallback', () {
+    final now = DateTime.utc(2026, 1, 1, 12);
+
+    test(
+      'stores the first ambiguous zero sample without emitting speed',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        harness.addPosition(
+          _position(
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now.subtract(const Duration(seconds: 1)),
+          ),
+        );
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, isEmpty);
+      },
+    );
+
+    test('uses position delta for a moving ambiguous zero sample', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness
+        ..addPosition(
+          _position(
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now.subtract(const Duration(seconds: 1)),
+          ),
+        )
+        ..addPosition(
+          _position(
+            longitude: 0.0001,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now,
+          ),
+        );
+      await pumpEventQueue();
+
+      final expectedSpeed = Geolocator.distanceBetween(0, 0, 0, 0.0001);
+      expect(harness.emittedSpeeds, hasLength(1));
+      expect(harness.emittedSpeeds.single.value, closeTo(expectedSpeed, 0.001));
+      expect(
+        harness.emittedSpeeds.single.accuracy,
+        closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
+      );
+      expect(
+        harness.emittedSpeeds.single.accuracy,
+        lessThan(SpeedTracker.unknownSpeedConfidence),
+      );
+    });
+
+    test('uses zero fallback speed inside the stationary deadband', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness
+        ..addPosition(
+          _position(
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now.subtract(const Duration(seconds: 1)),
+          ),
+        )
+        ..addPosition(
+          _position(
+            longitude: 0.00001,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now,
+          ),
+        );
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, hasLength(1));
+      expect(harness.emittedSpeeds.single.value, 0);
+      expect(
+        harness.emittedSpeeds.single.accuracy,
+        closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
+      );
+    });
+
+    test('trusts platform zero speed when speed accuracy is known', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness.addPosition(
+        _position(speed: 0, speedAccuracy: 0.5, timestamp: now),
+      );
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, hasLength(1));
+      expect(harness.emittedSpeeds.single.value, 0);
+      expect(
+        harness.emittedSpeeds.single.accuracy,
+        greaterThan(SpeedTracker.fallbackSpeedConfidence),
+      );
+    });
+
+    test(
+      'trusts non-zero platform speed even when speed accuracy is unknown',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        harness
+          ..addPosition(
+            _position(
+              speed: 0,
+              speedAccuracy: 0,
+              timestamp: now.subtract(const Duration(seconds: 1)),
+            ),
+          )
+          ..addPosition(
+            _position(
+              longitude: 0.0001,
+              speed: 8,
+              speedAccuracy: 0,
+              timestamp: now,
+            ),
+          );
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(1));
+        expect(harness.emittedSpeeds.single.value, 8);
+      },
+    );
+
+    test('does not fallback for non-increasing position timestamps', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness
+        ..addPosition(_position(speed: 0, speedAccuracy: 0, timestamp: now))
+        ..addPosition(
+          _position(
+            longitude: 0.0001,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now,
+          ),
+        );
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, isEmpty);
+    });
+
+    test('does not fallback when elapsed time is too short', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness
+        ..addPosition(
+          _position(
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now.subtract(const Duration(milliseconds: 300)),
+          ),
+        )
+        ..addPosition(
+          _position(
+            longitude: 0.0001,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now,
+          ),
+        );
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, isEmpty);
+    });
+
+    test(
+      'does not fallback when elapsed time exceeds freshness timeout',
+      () async {
+        var currentNow = now;
+        final harness = _SpeedTrackerStreamHarness(
+          now: now,
+          clock: () => currentNow,
+        );
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        harness.addPosition(
+          _position(speed: 0, speedAccuracy: 0, timestamp: now),
+        );
+        await pumpEventQueue();
+
+        currentNow = now.add(
+          SpeedTracker.freshnessTimeout + const Duration(seconds: 1),
+        );
+        harness.addPosition(
+          _position(
+            longitude: 0.0001,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: currentNow,
+          ),
+        );
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, isEmpty);
+      },
+    );
+  });
+
   group('SpeedTracker.stream freshness watchdog', () {
     final now = DateTime.utc(2026, 1, 1, 12);
 
@@ -517,14 +735,16 @@ void main() {
 }
 
 Position _position({
+  double latitude = 0,
+  double longitude = 0,
   required double speed,
   required DateTime timestamp,
   double accuracy = 5,
   double speedAccuracy = 0.5,
 }) {
   return Position(
-    longitude: 0,
-    latitude: 0,
+    longitude: longitude,
+    latitude: latitude,
     timestamp: timestamp,
     accuracy: accuracy,
     altitude: 0,

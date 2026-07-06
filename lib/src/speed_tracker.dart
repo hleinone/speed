@@ -17,9 +17,13 @@ class SpeedTracker {
   static const double maxAcceptedHorizontalAccuracy = 50.0;
   static const double maxHorizontalAccuracyError = maxAcceptedHorizontalAccuracy;
   static const double maxPlausibleAcceleration = 8.0;
+  static const double fallbackSpeedConfidence = unknownSpeedConfidence * 0.5;
+  static const double minFallbackStationaryDeadband = 2.0;
+  static const double maxFallbackStationaryDeadband = 10.0;
   static const Duration maxSampleAge = Duration(seconds: 5);
   static const Duration positionUpdateInterval = Duration(seconds: 1);
   static const Duration freshnessTimeout = Duration(seconds: 10);
+  static const Duration minFallbackSampleInterval = Duration(milliseconds: 500);
   static const Duration maxFutureSampleSkew = Duration(seconds: 1);
   static const int startupWarmupAcceptedSamples = 3;
 
@@ -48,6 +52,7 @@ class SpeedTracker {
     /// The Kalman filter instance for smoothing speed.
     KalmanFilter? kalmanFilter;
     AcceptedSpeedSample? lastAcceptedSample;
+    _ValidPositionSample? lastValidPositionSample;
 
     final locationSettings = createLocationSettings(defaultTargetPlatform);
 
@@ -86,18 +91,26 @@ class SpeedTracker {
     void onListen() {
       positionStreamSubscription = _getPositionStream(locationSettings).listen(
         (position) {
+          final now = _clock();
+          final positionSample = _validatePositionSample(position, now);
+          if (positionSample == null) {
+            return;
+          }
+
+          final previousPositionSample = lastValidPositionSample;
+          if (previousPositionSample == null || positionSample.timestamp.isAfter(previousPositionSample.timestamp)) {
+            lastValidPositionSample = positionSample;
+          }
+
           final previousAcceptedSample = lastAcceptedSample;
           final isStartupWarmup = acceptedStreamSampleCount < startupWarmupAcceptedSamples;
-          final validation = validateSpeedSample(
-            speed: position.speed,
-            timestamp: position.timestamp,
-            horizontalAccuracy: position.accuracy,
-            speedAccuracy: position.speedAccuracy,
-            now: _clock(),
+          final acceptedSample = _resolveAcceptedSpeedSample(
+            position: position,
+            positionSample: positionSample,
+            previousPositionSample: previousPositionSample,
             previousAcceptedSample: previousAcceptedSample,
             enforceAccelerationLimit: !isStartupWarmup,
           );
-          final acceptedSample = validation.acceptedSample;
           if (acceptedSample == null) {
             return;
           }
@@ -194,6 +207,115 @@ class SpeedTracker {
     );
   }
 
+  static AcceptedSpeedSample? _resolveAcceptedSpeedSample({
+    required Position position,
+    required _ValidPositionSample positionSample,
+    required _ValidPositionSample? previousPositionSample,
+    required AcceptedSpeedSample? previousAcceptedSample,
+    required bool enforceAccelerationLimit,
+  }) {
+    if (_hasAmbiguousZeroSpeed(position)) {
+      return _createFallbackSpeedSample(
+        currentSample: positionSample,
+        previousSample: previousPositionSample,
+        previousAcceptedSample: previousAcceptedSample,
+        enforceAccelerationLimit: enforceAccelerationLimit,
+      );
+    }
+
+    return validateSpeedSample(
+      speed: position.speed,
+      timestamp: positionSample.timestamp,
+      horizontalAccuracy: positionSample.horizontalAccuracy,
+      speedAccuracy: position.speedAccuracy,
+      now: positionSample.receivedAt,
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: enforceAccelerationLimit,
+    ).acceptedSample;
+  }
+
+  static bool _hasAmbiguousZeroSpeed(Position position) => position.speed == 0 && position.speedAccuracy == 0;
+
+  static _ValidPositionSample? _validatePositionSample(Position position, DateTime now) {
+    if (!position.latitude.isFinite || position.latitude < -90 || position.latitude > 90) {
+      return null;
+    }
+
+    if (!position.longitude.isFinite || position.longitude <= -180 || position.longitude > 180) {
+      return null;
+    }
+
+    if (position.timestamp.difference(now) > maxFutureSampleSkew) {
+      return null;
+    }
+
+    if (now.difference(position.timestamp) > maxSampleAge) {
+      return null;
+    }
+
+    if (!position.accuracy.isFinite || position.accuracy <= 0 || position.accuracy > maxAcceptedHorizontalAccuracy) {
+      return null;
+    }
+
+    return _ValidPositionSample(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      timestamp: position.timestamp,
+      horizontalAccuracy: position.accuracy,
+      receivedAt: now,
+    );
+  }
+
+  static AcceptedSpeedSample? _createFallbackSpeedSample({
+    required _ValidPositionSample currentSample,
+    required _ValidPositionSample? previousSample,
+    required AcceptedSpeedSample? previousAcceptedSample,
+    required bool enforceAccelerationLimit,
+  }) {
+    if (previousSample == null) {
+      return null;
+    }
+
+    final elapsed = currentSample.timestamp.difference(previousSample.timestamp);
+    if (elapsed <= Duration.zero || elapsed < minFallbackSampleInterval || elapsed > freshnessTimeout) {
+      return null;
+    }
+
+    final elapsedSeconds = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
+    final distance = Geolocator.distanceBetween(
+      previousSample.latitude,
+      previousSample.longitude,
+      currentSample.latitude,
+      currentSample.longitude,
+    );
+    if (!distance.isFinite) {
+      return null;
+    }
+
+    final stationaryDeadband = ((previousSample.horizontalAccuracy + currentSample.horizontalAccuracy) * 0.5)
+        .clamp(minFallbackStationaryDeadband, maxFallbackStationaryDeadband)
+        .toDouble();
+    final speed = distance <= stationaryDeadband ? 0.0 : distance / elapsedSeconds;
+    final speedAccuracy = SpeedAccuracyEstimate(
+      standardDeviation: max(
+        fallbackSpeedAccuracy,
+        (previousSample.horizontalAccuracy + currentSample.horizontalAccuracy) / elapsedSeconds,
+      ),
+      confidence: fallbackSpeedConfidence,
+      isKnown: false,
+    );
+
+    return _validateSpeedSample(
+      speed: speed,
+      timestamp: currentSample.timestamp,
+      horizontalAccuracy: currentSample.horizontalAccuracy,
+      speedAccuracy: speedAccuracy,
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: enforceAccelerationLimit,
+      source: SpeedSampleSource.positionDelta,
+    ).acceptedSample;
+  }
+
   static SpeedAccuracyEstimate normalizeSpeedAccuracy(double speedAccuracy) {
     if (speedAccuracy.isFinite && speedAccuracy > 0) {
       return SpeedAccuracyEstimate(
@@ -219,28 +341,53 @@ class SpeedTracker {
     AcceptedSpeedSample? previousAcceptedSample,
     bool enforceAccelerationLimit = true,
   }) {
+    return _validateSpeedSample(
+      speed: speed,
+      timestamp: timestamp,
+      horizontalAccuracy: horizontalAccuracy,
+      speedAccuracy: normalizeSpeedAccuracy(speedAccuracy),
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: enforceAccelerationLimit,
+      source: SpeedSampleSource.platform,
+      now: now,
+    );
+  }
+
+  static SpeedSampleValidation _validateSpeedSample({
+    required double speed,
+    required DateTime timestamp,
+    required double horizontalAccuracy,
+    required SpeedAccuracyEstimate speedAccuracy,
+    required AcceptedSpeedSample? previousAcceptedSample,
+    required bool enforceAccelerationLimit,
+    required SpeedSampleSource source,
+    DateTime? now,
+  }) {
     if (!speed.isFinite || speed < 0) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidSpeed);
     }
 
-    if (timestamp.difference(now) > maxFutureSampleSkew) {
-      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.futureTimestamp);
-    }
+    final receivedAt = now;
+    if (receivedAt != null) {
+      if (timestamp.difference(receivedAt) > maxFutureSampleSkew) {
+        return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.futureTimestamp);
+      }
 
-    if (now.difference(timestamp) > maxSampleAge) {
-      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.staleTimestamp);
+      if (receivedAt.difference(timestamp) > maxSampleAge) {
+        return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.staleTimestamp);
+      }
     }
 
     if (!horizontalAccuracy.isFinite || horizontalAccuracy <= 0 || horizontalAccuracy > maxAcceptedHorizontalAccuracy) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidHorizontalAccuracy);
     }
 
-    final normalizedSpeedAccuracy = normalizeSpeedAccuracy(speedAccuracy);
     final acceptedSample = AcceptedSpeedSample(
       speed: speed,
       timestamp: timestamp,
       horizontalAccuracy: horizontalAccuracy,
-      speedAccuracy: normalizedSpeedAccuracy,
+      speedAccuracy: speedAccuracy,
+      source: source,
     );
     final previousSample = previousAcceptedSample;
     if (previousSample == null) {
@@ -260,7 +407,7 @@ class SpeedTracker {
     final allowedSpeedChange =
         (maxPlausibleAcceleration * elapsedSeconds) +
         previousSample.speedAccuracy.standardDeviation +
-        normalizedSpeedAccuracy.standardDeviation;
+        speedAccuracy.standardDeviation;
     if ((speed - previousSample.speed).abs() > allowedSpeedChange) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.implausibleAcceleration);
     }
@@ -300,12 +447,30 @@ class AcceptedSpeedSample {
   final DateTime timestamp;
   final double horizontalAccuracy;
   final SpeedAccuracyEstimate speedAccuracy;
+  final SpeedSampleSource source;
 
   const AcceptedSpeedSample({
     required this.speed,
     required this.timestamp,
     required this.horizontalAccuracy,
     required this.speedAccuracy,
+    this.source = SpeedSampleSource.platform,
+  });
+}
+
+class _ValidPositionSample {
+  final double latitude;
+  final double longitude;
+  final DateTime timestamp;
+  final double horizontalAccuracy;
+  final DateTime receivedAt;
+
+  const _ValidPositionSample({
+    required this.latitude,
+    required this.longitude,
+    required this.timestamp,
+    required this.horizontalAccuracy,
+    required this.receivedAt,
   });
 }
 
@@ -328,6 +493,8 @@ enum SpeedSampleRejectionReason {
   nonIncreasingTimestamp,
   implausibleAcceleration,
 }
+
+enum SpeedSampleSource { platform, positionDelta }
 
 class SpeedAccuracyEstimate {
   final double standardDeviation;
