@@ -20,11 +20,15 @@ class SpeedTracker {
   static const double fallbackSpeedConfidence = unknownSpeedConfidence * 0.5;
   static const double minFallbackStationaryDeadband = 2.0;
   static const double maxFallbackStationaryDeadband = 10.0;
+  static const double _fallbackStationarySpeedEpsilon = 0.2;
   static const Duration maxSampleAge = Duration(seconds: 5);
   static const Duration positionUpdateInterval = Duration(seconds: 1);
   static const Duration freshnessTimeout = Duration(seconds: 10);
   static const Duration minFallbackSampleInterval = Duration(milliseconds: 500);
+  static const Duration _fallbackRegressionWindow = Duration(seconds: 5);
+  static const Duration _minFallbackRegressionSpan = Duration(seconds: 3);
   static const Duration maxFutureSampleSkew = Duration(seconds: 1);
+  static const int _minFallbackRegressionSamples = 4;
   static const int startupWarmupAcceptedSamples = 3;
 
   /// Process noise per second for the Kalman filter. A lower value means more smoothing but less responsiveness.
@@ -52,7 +56,7 @@ class SpeedTracker {
     /// The Kalman filter instance for smoothing speed.
     KalmanFilter? kalmanFilter;
     AcceptedSpeedSample? lastAcceptedSample;
-    _ValidPositionSample? lastValidPositionSample;
+    final fallbackPositionSamples = <_ValidPositionSample>[];
 
     final locationSettings = createLocationSettings(defaultTargetPlatform);
 
@@ -97,21 +101,31 @@ class SpeedTracker {
             return;
           }
 
-          final previousPositionSample = lastValidPositionSample;
-          if (previousPositionSample == null || positionSample.timestamp.isAfter(previousPositionSample.timestamp)) {
-            lastValidPositionSample = positionSample;
+          final addedToFallbackWindow = _appendFallbackPositionSample(fallbackPositionSamples, positionSample);
+          if (!addedToFallbackWindow && _hasAmbiguousZeroSpeed(position)) {
+            return;
           }
 
           final previousAcceptedSample = lastAcceptedSample;
           final isStartupWarmup = acceptedStreamSampleCount < startupWarmupAcceptedSamples;
-          final acceptedSample = _resolveAcceptedSpeedSample(
+          final validation = _resolveSpeedSampleValidation(
             position: position,
             positionSample: positionSample,
-            previousPositionSample: previousPositionSample,
+            fallbackPositionSamples: fallbackPositionSamples,
             previousAcceptedSample: previousAcceptedSample,
             enforceAccelerationLimit: !isStartupWarmup,
           );
+          if (validation == null) {
+            return;
+          }
+
+          final acceptedSample = validation.acceptedSample;
           if (acceptedSample == null) {
+            if (validation.rejectionReason == SpeedSampleRejectionReason.implausibleAcceleration &&
+                addedToFallbackWindow &&
+                _hasAmbiguousZeroSpeed(position)) {
+              fallbackPositionSamples.removeLast();
+            }
             return;
           }
 
@@ -207,17 +221,29 @@ class SpeedTracker {
     );
   }
 
-  static AcceptedSpeedSample? _resolveAcceptedSpeedSample({
+  static bool _appendFallbackPositionSample(List<_ValidPositionSample> samples, _ValidPositionSample sample) {
+    if (samples.isNotEmpty && !sample.timestamp.isAfter(samples.last.timestamp)) {
+      return false;
+    }
+
+    samples.add(sample);
+    samples.removeWhere(
+      (historySample) => sample.timestamp.difference(historySample.timestamp) > _fallbackRegressionWindow,
+    );
+    return true;
+  }
+
+  static SpeedSampleValidation? _resolveSpeedSampleValidation({
     required Position position,
     required _ValidPositionSample positionSample,
-    required _ValidPositionSample? previousPositionSample,
+    required List<_ValidPositionSample> fallbackPositionSamples,
     required AcceptedSpeedSample? previousAcceptedSample,
     required bool enforceAccelerationLimit,
   }) {
     if (_hasAmbiguousZeroSpeed(position)) {
       return _createFallbackSpeedSample(
         currentSample: positionSample,
-        previousSample: previousPositionSample,
+        samples: fallbackPositionSamples,
         previousAcceptedSample: previousAcceptedSample,
         enforceAccelerationLimit: enforceAccelerationLimit,
       );
@@ -231,7 +257,7 @@ class SpeedTracker {
       now: positionSample.receivedAt,
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: enforceAccelerationLimit,
-    ).acceptedSample;
+    );
   }
 
   static bool _hasAmbiguousZeroSpeed(Position position) => position.speed == 0 && position.speedAccuracy == 0;
@@ -266,54 +292,107 @@ class SpeedTracker {
     );
   }
 
-  static AcceptedSpeedSample? _createFallbackSpeedSample({
+  static SpeedSampleValidation? _createFallbackSpeedSample({
     required _ValidPositionSample currentSample,
-    required _ValidPositionSample? previousSample,
+    required List<_ValidPositionSample> samples,
     required AcceptedSpeedSample? previousAcceptedSample,
     required bool enforceAccelerationLimit,
   }) {
-    if (previousSample == null) {
+    final estimate = _estimateFallbackSpeed(samples);
+    if (estimate == null) {
       return null;
     }
 
-    final elapsed = currentSample.timestamp.difference(previousSample.timestamp);
-    if (elapsed <= Duration.zero || elapsed < minFallbackSampleInterval || elapsed > freshnessTimeout) {
-      return null;
-    }
-
-    final elapsedSeconds = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
-    final distance = Geolocator.distanceBetween(
-      previousSample.latitude,
-      previousSample.longitude,
-      currentSample.latitude,
-      currentSample.longitude,
+    return _validateSpeedSample(
+      speed: estimate.speed,
+      timestamp: currentSample.timestamp,
+      horizontalAccuracy: currentSample.horizontalAccuracy,
+      speedAccuracy: estimate.speedAccuracy,
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: enforceAccelerationLimit,
+      source: SpeedSampleSource.positionDelta,
     );
-    if (!distance.isFinite) {
+  }
+
+  static _FallbackSpeedEstimate? _estimateFallbackSpeed(List<_ValidPositionSample> samples) {
+    if (samples.length < _minFallbackRegressionSamples) {
       return null;
     }
 
-    final stationaryDeadband = ((previousSample.horizontalAccuracy + currentSample.horizontalAccuracy) * 0.5)
-        .clamp(minFallbackStationaryDeadband, maxFallbackStationaryDeadband)
-        .toDouble();
-    final speed = distance <= stationaryDeadband ? 0.0 : distance / elapsedSeconds;
+    final firstSample = samples.first;
+    final lastSample = samples.last;
+    final elapsed = lastSample.timestamp.difference(firstSample.timestamp);
+    if (elapsed < _minFallbackRegressionSpan) {
+      return null;
+    }
+
+    final origin = samples.first;
+    final regressionPoints = samples
+        .map((sample) {
+          final t = sample.timestamp.difference(origin.timestamp).inMicroseconds / Duration.microsecondsPerSecond;
+          final x =
+              Geolocator.distanceBetween(origin.latitude, origin.longitude, origin.latitude, sample.longitude) *
+              (sample.longitude >= origin.longitude ? 1 : -1);
+          final y =
+              Geolocator.distanceBetween(origin.latitude, origin.longitude, sample.latitude, origin.longitude) *
+              (sample.latitude >= origin.latitude ? 1 : -1);
+          final weight = 1 / (sample.horizontalAccuracy * sample.horizontalAccuracy);
+          return _FallbackRegressionPoint(t: t, x: x, y: y, weight: weight);
+        })
+        .toList(growable: false);
+
+    final xVelocity = _weightedSlope(regressionPoints, (point) => point.x);
+    final yVelocity = _weightedSlope(regressionPoints, (point) => point.y);
+    if (xVelocity == null || yVelocity == null) {
+      return null;
+    }
+
+    final fittedSpeed = sqrt((xVelocity * xVelocity) + (yVelocity * yVelocity));
+    final speed = fittedSpeed < _fallbackStationarySpeedEpsilon ? 0.0 : fittedSpeed;
+    final elapsedSeconds = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
     final speedAccuracy = SpeedAccuracyEstimate(
       standardDeviation: max(
         fallbackSpeedAccuracy,
-        (previousSample.horizontalAccuracy + currentSample.horizontalAccuracy) / elapsedSeconds,
+        (firstSample.horizontalAccuracy + lastSample.horizontalAccuracy) / elapsedSeconds,
       ),
       confidence: fallbackSpeedConfidence,
       isKnown: false,
     );
 
-    return _validateSpeedSample(
-      speed: speed,
-      timestamp: currentSample.timestamp,
-      horizontalAccuracy: currentSample.horizontalAccuracy,
-      speedAccuracy: speedAccuracy,
-      previousAcceptedSample: previousAcceptedSample,
-      enforceAccelerationLimit: enforceAccelerationLimit,
-      source: SpeedSampleSource.positionDelta,
-    ).acceptedSample;
+    return _FallbackSpeedEstimate(speed: speed, speedAccuracy: speedAccuracy);
+  }
+
+  static double? _weightedSlope(
+    List<_FallbackRegressionPoint> points,
+    double Function(_FallbackRegressionPoint) value,
+  ) {
+    var weightSum = 0.0;
+    var weightedTimeSum = 0.0;
+    var weightedValueSum = 0.0;
+    for (final point in points) {
+      weightSum += point.weight;
+      weightedTimeSum += point.weight * point.t;
+      weightedValueSum += point.weight * value(point);
+    }
+
+    if (weightSum <= 0) {
+      return null;
+    }
+
+    final meanTime = weightedTimeSum / weightSum;
+    final meanValue = weightedValueSum / weightSum;
+    var covariance = 0.0;
+    var variance = 0.0;
+    for (final point in points) {
+      final centeredTime = point.t - meanTime;
+      covariance += point.weight * centeredTime * (value(point) - meanValue);
+      variance += point.weight * centeredTime * centeredTime;
+    }
+
+    if (variance <= 0) {
+      return null;
+    }
+    return covariance / variance;
   }
 
   static SpeedAccuracyEstimate normalizeSpeedAccuracy(double speedAccuracy) {
@@ -472,6 +551,22 @@ class _ValidPositionSample {
     required this.horizontalAccuracy,
     required this.receivedAt,
   });
+}
+
+class _FallbackSpeedEstimate {
+  final double speed;
+  final SpeedAccuracyEstimate speedAccuracy;
+
+  const _FallbackSpeedEstimate({required this.speed, required this.speedAccuracy});
+}
+
+class _FallbackRegressionPoint {
+  final double t;
+  final double x;
+  final double y;
+  final double weight;
+
+  const _FallbackRegressionPoint({required this.t, required this.x, required this.y, required this.weight});
 }
 
 class SpeedSampleValidation {

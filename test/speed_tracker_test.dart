@@ -283,72 +283,112 @@ void main() {
       },
     );
 
-    test('uses position delta for a moving ambiguous zero sample', () async {
-      final harness = _SpeedTrackerStreamHarness(now: now);
-      addTearDown(harness.dispose);
+    test(
+      'uses regression fallback for stable ambiguous zero movement',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
 
-      await harness.start();
-      harness
-        ..addPosition(
-          _position(
-            speed: 0,
-            speedAccuracy: 0,
-            timestamp: now.subtract(const Duration(seconds: 1)),
-          ),
-        )
-        ..addPosition(
-          _position(
-            longitude: 0.0001,
-            speed: 0,
-            speedAccuracy: 0,
-            timestamp: now,
-          ),
+        await harness.start();
+        for (var i = 0; i < 4; i++) {
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 4.0 * i,
+              speed: 0,
+              speedAccuracy: 0,
+              timestamp: now.subtract(Duration(seconds: 3 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(1));
+        expect(harness.emittedSpeeds.single.value, closeTo(4, 0.1));
+        expect(
+          harness.emittedSpeeds.single.accuracy,
+          closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
         );
-      await pumpEventQueue();
-
-      final expectedSpeed = Geolocator.distanceBetween(0, 0, 0, 0.0001);
-      expect(harness.emittedSpeeds, hasLength(1));
-      expect(harness.emittedSpeeds.single.value, closeTo(expectedSpeed, 0.001));
-      expect(
-        harness.emittedSpeeds.single.accuracy,
-        closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
-      );
-      expect(
-        harness.emittedSpeeds.single.accuracy,
-        lessThan(SpeedTracker.unknownSpeedConfidence),
-      );
-    });
-
-    test('uses zero fallback speed inside the stationary deadband', () async {
-      final harness = _SpeedTrackerStreamHarness(now: now);
-      addTearDown(harness.dispose);
-
-      await harness.start();
-      harness
-        ..addPosition(
-          _position(
-            speed: 0,
-            speedAccuracy: 0,
-            timestamp: now.subtract(const Duration(seconds: 1)),
-          ),
-        )
-        ..addPosition(
-          _position(
-            longitude: 0.00001,
-            speed: 0,
-            speedAccuracy: 0,
-            timestamp: now,
-          ),
+        expect(
+          harness.emittedSpeeds.single.accuracy,
+          lessThan(SpeedTracker.unknownSpeedConfidence),
         );
-      await pumpEventQueue();
+      },
+    );
 
-      expect(harness.emittedSpeeds, hasLength(1));
-      expect(harness.emittedSpeeds.single.value, 0);
-      expect(
-        harness.emittedSpeeds.single.accuracy,
-        closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
-      );
-    });
+    test(
+      'does not clamp stable low fallback movement inside GPS accuracy to zero',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 4; i++) {
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 3.0 * i,
+              speed: 0,
+              speedAccuracy: 0,
+              timestamp: now.subtract(Duration(seconds: 3 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(1));
+        expect(harness.emittedSpeeds.single.value, closeTo(3, 0.1));
+      },
+    );
+
+    test(
+      'uses zero fallback speed for a stationary regression window',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 4; i++) {
+          harness.addPosition(
+            _position(
+              speed: 0,
+              speedAccuracy: 0,
+              timestamp: now.subtract(Duration(seconds: 3 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(1));
+        expect(harness.emittedSpeeds.single.value, 0);
+        expect(
+          harness.emittedSpeeds.single.accuracy,
+          closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
+        );
+      },
+    );
+
+    test(
+      'uses zero fallback speed below the stationary speed epsilon',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 4; i++) {
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 0.1 * i,
+              speed: 0,
+              speedAccuracy: 0,
+              timestamp: now.subtract(Duration(seconds: 3 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(1));
+        expect(harness.emittedSpeeds.single.value, 0);
+      },
+    );
 
     test('trusts platform zero speed when speed accuracy is known', () async {
       final harness = _SpeedTrackerStreamHarness(now: now);
@@ -418,27 +458,47 @@ void main() {
       expect(harness.emittedSpeeds, isEmpty);
     });
 
-    test('does not fallback when elapsed time is too short', () async {
+    test('does not fallback before the minimum sample count', () async {
       final harness = _SpeedTrackerStreamHarness(now: now);
       addTearDown(harness.dispose);
 
       await harness.start();
-      harness
-        ..addPosition(
-          _position(
+      for (var i = 0; i < 3; i++) {
+        harness.addPosition(
+          _eastwardPosition(
+            metersEast: 4.0 * i,
             speed: 0,
             speedAccuracy: 0,
-            timestamp: now.subtract(const Duration(milliseconds: 300)),
-          ),
-        )
-        ..addPosition(
-          _position(
-            longitude: 0.0001,
-            speed: 0,
-            speedAccuracy: 0,
-            timestamp: now,
+            timestamp: now.subtract(Duration(seconds: 3 - i)),
           ),
         );
+      }
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, isEmpty);
+    });
+
+    test('does not fallback before the minimum regression span', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      final offsets = [
+        const Duration(seconds: 2),
+        const Duration(milliseconds: 1500),
+        const Duration(seconds: 1),
+        Duration.zero,
+      ];
+      for (var i = 0; i < offsets.length; i++) {
+        harness.addPosition(
+          _eastwardPosition(
+            metersEast: 4.0 * i,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: now.subtract(offsets[i]),
+          ),
+        );
+      }
       await pumpEventQueue();
 
       expect(harness.emittedSpeeds, isEmpty);
@@ -474,6 +534,94 @@ void main() {
         await pumpEventQueue();
 
         expect(harness.emittedSpeeds, isEmpty);
+      },
+    );
+
+    test('prunes samples older than the fallback regression window', () async {
+      var currentNow = now;
+      final harness = _SpeedTrackerStreamHarness(
+        now: now,
+        clock: () => currentNow,
+      );
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness.addPosition(
+        _eastwardPosition(
+          metersEast: 1000,
+          speed: 0,
+          speedAccuracy: 0,
+          timestamp: currentNow,
+        ),
+      );
+
+      for (var i = 0; i < 4; i++) {
+        currentNow = now.add(Duration(seconds: 6 + i));
+        harness.addPosition(
+          _eastwardPosition(
+            metersEast: 2.0 * i,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: currentNow,
+          ),
+        );
+      }
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, hasLength(1));
+      expect(harness.emittedSpeeds.single.value, closeTo(2, 0.1));
+    });
+
+    test(
+      'removes an implausible fallback outlier from the regression window',
+      () async {
+        var currentNow = now;
+        final harness = _SpeedTrackerStreamHarness(
+          now: now,
+          clock: () => currentNow,
+        );
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 3; i++) {
+          currentNow = now.add(Duration(seconds: i));
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 2.0 * i,
+              speed: 2,
+              speedAccuracy: 0.5,
+              timestamp: currentNow,
+            ),
+          );
+        }
+
+        currentNow = now.add(const Duration(seconds: 3));
+        harness.addPosition(
+          _eastwardPosition(
+            metersEast: 1000,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: currentNow,
+          ),
+        );
+
+        currentNow = now.add(const Duration(seconds: 4));
+        harness.addPosition(
+          _eastwardPosition(
+            metersEast: 8,
+            speed: 0,
+            speedAccuracy: 0,
+            timestamp: currentNow,
+          ),
+        );
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(4));
+        expect(
+          harness.emittedSpeeds.where((speed) => (speed.value ?? 0) > 20),
+          isEmpty,
+        );
+        expect(harness.emittedSpeeds.last.value, closeTo(2, 0.1));
       },
     );
   });
@@ -732,6 +880,24 @@ void main() {
       });
     });
   });
+}
+
+const _metersPerLongitudeDegreeAtEquator = 111319.49079327358;
+
+Position _eastwardPosition({
+  required double metersEast,
+  required double speed,
+  required DateTime timestamp,
+  double accuracy = 5,
+  double speedAccuracy = 0.5,
+}) {
+  return _position(
+    longitude: metersEast / _metersPerLongitudeDegreeAtEquator,
+    speed: speed,
+    timestamp: timestamp,
+    accuracy: accuracy,
+    speedAccuracy: speedAccuracy,
+  );
 }
 
 Position _position({
