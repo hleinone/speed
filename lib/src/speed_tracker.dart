@@ -7,6 +7,11 @@ import 'package:speed/src/generated/l10n/l10n.dart';
 import 'package:speed/src/util/kalman_filter.dart';
 
 class SpeedTracker {
+  static const double fallbackSpeedAccuracy = 2.0;
+  static const double unknownSpeedConfidence = 0.25;
+  static const double maxSpeedAccuracyError = 5.0;
+  static const double maxHorizontalAccuracyError = 50.0;
+
   /// Process noise for the Kalman filter. A lower value means more smoothing but less responsiveness.
   final double processNoise;
 
@@ -36,13 +41,11 @@ class SpeedTracker {
     }
 
     final initialPosition = await Geolocator.getCurrentPosition(locationSettings: locationSettings);
+    final initialSpeedAccuracy = normalizeSpeedAccuracy(initialPosition.speedAccuracy);
     // Initialize the filter with the first measurement.
     kalmanFilter = KalmanFilter(
       initialMeasurement: initialPosition.speed, // Initial state is the first measured speed.
-      initialMeasurementNoise: pow(
-        initialPosition.speedAccuracy,
-        2,
-      ).toDouble(), // Initial uncertainty is the measurement noise.
+      initialMeasurementNoise: initialSpeedAccuracy.measurementNoise,
       processNoise: processNoise,
     );
 
@@ -52,18 +55,13 @@ class SpeedTracker {
           final rawSpeed = position.speed;
           double filteredSpeed;
 
-          // The measurement noise (R) is the variance of the GPS speed reading.
-          // Variance = (Standard Deviation)^2. We use speedAccuracy as the standard deviation.
-          final double measurementNoise = pow(position.speedAccuracy, 2).toDouble();
+          final speedAccuracy = normalizeSpeedAccuracy(position.speedAccuracy);
 
           // Update the filter with the new measurement.
-          filteredSpeed = kalmanFilter.update(rawSpeed, measurementNoise);
+          filteredSpeed = kalmanFilter.update(rawSpeed, speedAccuracy.measurementNoise);
 
           // Use the same combined accuracy logic as before.
-          const double maxSpeedAccuracyError = 5.0;
-          final double speedConfidence =
-              1.0 - (min(position.speedAccuracy, maxSpeedAccuracyError) / maxSpeedAccuracyError);
-          const double maxHorizontalAccuracyError = 50.0;
+          final double speedConfidence = speedAccuracy.confidence;
           final double positionConfidence =
               1.0 - (min(position.accuracy, maxHorizontalAccuracyError) / maxHorizontalAccuracyError);
           final double finalAccuracy = speedConfidence * positionConfidence;
@@ -100,6 +98,22 @@ class SpeedTracker {
     yield* controller.stream;
   }
 
+  static SpeedAccuracyEstimate normalizeSpeedAccuracy(double speedAccuracy) {
+    if (speedAccuracy.isFinite && speedAccuracy > 0) {
+      return SpeedAccuracyEstimate(
+        standardDeviation: speedAccuracy,
+        confidence: 1.0 - (min(speedAccuracy, maxSpeedAccuracyError) / maxSpeedAccuracyError),
+        isKnown: true,
+      );
+    }
+
+    return const SpeedAccuracyEstimate(
+      standardDeviation: fallbackSpeedAccuracy,
+      confidence: unknownSpeedConfidence,
+      isKnown: false,
+    );
+  }
+
   Future<bool> _checkPermissions() async {
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -124,6 +138,16 @@ class SpeedTracker {
 
     return accuracy == LocationAccuracyStatus.precise;
   }
+}
+
+class SpeedAccuracyEstimate {
+  final double standardDeviation;
+  final double confidence;
+  final bool isKnown;
+
+  const SpeedAccuracyEstimate({required this.standardDeviation, required this.confidence, required this.isKnown});
+
+  double get measurementNoise => standardDeviation * standardDeviation;
 }
 
 class Speed {

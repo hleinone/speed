@@ -4,9 +4,12 @@ class KalmanFilter {
   final double processNoise;
   final double initialMeasurementNoise;
 
-  KalmanFilter({required double initialMeasurement, this.initialMeasurementNoise = 4.0, this.processNoise = 1.0})
-    : _estimate = initialMeasurement,
-      _errorCovariance = 1.0;
+  KalmanFilter({
+    required double initialMeasurement,
+    this.initialMeasurementNoise = 4.0,
+    this.processNoise = 1.0,
+  }) : _estimate = initialMeasurement,
+       _errorCovariance = initialMeasurementNoise;
 
   double update(double measurement, double measurementNoise) {
     // Prediction update
