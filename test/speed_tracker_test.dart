@@ -175,6 +175,29 @@ void main() {
       }
     });
 
+    test(
+      'rejects zero, negative, NaN, and infinite platform speed accuracy',
+      () {
+        const invalidSpeedAccuracies = [
+          0.0,
+          -1.0,
+          double.nan,
+          double.infinity,
+          double.negativeInfinity,
+        ];
+
+        for (final speedAccuracy in invalidSpeedAccuracies) {
+          final validation = validate(speedAccuracy: speedAccuracy);
+
+          expect(validation.isAccepted, isFalse);
+          expect(
+            validation.rejectionReason,
+            SpeedSampleRejectionReason.invalidSpeedAccuracy,
+          );
+        }
+      },
+    );
+
     test('accepts plausible speed changes between accepted samples', () {
       final previousSample = acceptedSample(
         speed: 10,
@@ -589,32 +612,89 @@ void main() {
     });
 
     test(
-      'trusts non-zero platform speed even when speed accuracy is unknown',
+      'withholds non-zero unknown-accuracy platform speed before fallback is ready',
       () async {
         final harness = _SpeedTrackerStreamHarness(now: now);
         addTearDown(harness.dispose);
 
         await harness.start();
-        harness
-          ..addPosition(
-            _position(
-              speed: 0,
-              speedAccuracy: 0,
-              timestamp: now.subtract(const Duration(seconds: 1)),
-            ),
-          )
-          ..addPosition(
-            _position(
-              longitude: 0.0001,
+        for (var i = 0; i < 3; i++) {
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 4.0 * i,
               speed: 8,
               speedAccuracy: 0,
-              timestamp: now,
+              timestamp: now.subtract(Duration(seconds: 3 - i)),
             ),
           );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, isEmpty);
+      },
+    );
+
+    test(
+      'uses fallback for non-zero platform speed when speed accuracy is unknown',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 4; i++) {
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 4.0 * i,
+              speed: 8,
+              speedAccuracy: 0,
+              timestamp: now.subtract(Duration(seconds: 4 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, isEmpty);
+
+        harness.addPosition(
+          _eastwardPosition(
+            metersEast: 16,
+            speed: 8,
+            speedAccuracy: 0,
+            timestamp: now,
+          ),
+        );
         await pumpEventQueue();
 
         expect(harness.emittedSpeeds, hasLength(1));
-        expect(harness.emittedSpeeds.single.value, 8);
+        expect(harness.emittedSpeeds.single.value, closeTo(4, 0.1));
+        expect(
+          harness.emittedSpeeds.single.accuracy,
+          closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
+        );
+      },
+    );
+
+    test(
+      'does not fallback from non-zero unknown-accuracy speed samples with unknown horizontal accuracy',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 5; i++) {
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 4.0 * i,
+              speed: 8,
+              speedAccuracy: 0,
+              accuracy: 0,
+              timestamp: now.subtract(Duration(seconds: 4 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, isEmpty);
       },
     );
 
