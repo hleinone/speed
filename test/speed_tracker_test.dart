@@ -198,6 +198,33 @@ void main() {
       },
     );
 
+    test('rejects zero-confidence speed accuracy', () {
+      const zeroConfidenceSpeedAccuracies = [
+        SpeedTracker.maxSpeedAccuracyError,
+        SpeedTracker.maxSpeedAccuracyError + 1,
+      ];
+
+      for (final speedAccuracy in zeroConfidenceSpeedAccuracies) {
+        final validation = validate(speedAccuracy: speedAccuracy);
+
+        expect(validation.isAccepted, isFalse);
+        expect(
+          validation.rejectionReason,
+          SpeedSampleRejectionReason.insufficientConfidence,
+        );
+      }
+    });
+
+    test('rejects zero-confidence horizontal accuracy', () {
+      final validation = validate(horizontalAccuracy: SpeedTracker.maxAcceptedHorizontalAccuracy);
+
+      expect(validation.isAccepted, isFalse);
+      expect(
+        validation.rejectionReason,
+        SpeedSampleRejectionReason.insufficientConfidence,
+      );
+    });
+
     test('accepts plausible speed changes between accepted samples', () {
       final previousSample = acceptedSample(
         speed: 10,
@@ -565,6 +592,7 @@ void main() {
           harness.emittedSpeeds.single.accuracy,
           closeTo(SpeedTracker.unknownSpeedConfidence * 0.9, 0.000001),
         );
+        expect(harness.emittedSpeeds.single.accuracy, greaterThan(0));
         expect(
           harness.emittedSpeeds.single.accuracy,
           lessThan(SpeedTracker.unknownSpeedConfidence),
@@ -590,6 +618,7 @@ void main() {
           harness.emittedSpeeds.single.accuracy,
           closeTo(SpeedTracker.unknownSpeedConfidence * 0.9, 0.000001),
         );
+        expect(harness.emittedSpeeds.single.accuracy, greaterThan(0));
         expect(
           harness.emittedSpeeds.single.accuracy,
           lessThan(SpeedTracker.unknownSpeedConfidence),
@@ -609,6 +638,41 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, 8);
+    });
+
+    test('withholds zero-confidence platform speed accuracy', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness.addPosition(
+        _position(
+          speed: 8,
+          speedAccuracy: SpeedTracker.maxSpeedAccuracyError,
+          timestamp: now,
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, isEmpty);
+    });
+
+    test('withholds zero-confidence platform horizontal accuracy', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness.addPosition(
+        _position(
+          speed: 8,
+          speedAccuracy: 0.5,
+          accuracy: SpeedTracker.maxAcceptedHorizontalAccuracy,
+          timestamp: now,
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, isEmpty);
     });
 
     test(
@@ -671,6 +735,30 @@ void main() {
           harness.emittedSpeeds.single.accuracy,
           closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
         );
+      },
+    );
+
+    test(
+      'withholds fallback at zero-confidence horizontal accuracy boundary',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 5; i++) {
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 4.0 * i,
+              speed: 0,
+              speedAccuracy: 0,
+              accuracy: SpeedTracker.maxAcceptedHorizontalAccuracy,
+              timestamp: now.subtract(Duration(seconds: 4 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, isEmpty);
       },
     );
 

@@ -582,6 +582,10 @@ class SpeedTracker {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidSpeedAccuracy);
     }
 
+    if (speedAccuracy.confidence <= 0 || _horizontalAccuracyConfidence(horizontalAccuracy) <= 0) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.insufficientConfidence);
+    }
+
     final acceptedSample = AcceptedSpeedSample(
       speed: speed,
       timestamp: timestamp,
@@ -953,6 +957,7 @@ enum SpeedSampleRejectionReason {
   staleTimestamp,
   futureTimestamp,
   invalidHorizontalAccuracy,
+  insufficientConfidence,
   nonIncreasingTimestamp,
   implausibleAcceleration,
 }
