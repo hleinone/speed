@@ -33,6 +33,8 @@ class SpeedTracker {
   static const double _fallbackSegmentSpeedAccuracyFactor = 2.0;
   static const double _fallbackConfirmationMinTolerance = 1.0;
   static const double _fallbackConfirmationSpeedFactor = 0.35;
+  static const double _startupJumpConfirmationMinTolerance = 1.0;
+  static const double _startupJumpConfirmationSpeedFactor = 0.20;
   static const Duration maxSampleAge = Duration(seconds: 5);
   static const Duration positionUpdateInterval = Duration(seconds: 1);
   static const Duration freshnessTimeout = Duration(seconds: 10);
@@ -556,15 +558,40 @@ class SpeedTracker {
       return SpeedSampleValidation.accepted(acceptedSample);
     }
 
-    final allowedSpeedChange =
-        (maxPlausibleAcceleration * elapsedSeconds) +
-        previousSample.speedAccuracy.standardDeviation +
-        speedAccuracy.standardDeviation;
-    if ((speed - previousSample.speed).abs() > allowedSpeedChange) {
+    if (!_hasPlausibleSpeedChange(
+      previousSample: previousSample,
+      speed: speed,
+      speedAccuracy: speedAccuracy,
+      elapsedSeconds: elapsedSeconds,
+    )) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.implausibleAcceleration);
     }
 
     return SpeedSampleValidation.accepted(acceptedSample);
+  }
+
+  static bool _hasPlausibleSpeedChange({
+    required AcceptedSpeedSample previousSample,
+    required double speed,
+    required SpeedAccuracyEstimate speedAccuracy,
+    required double elapsedSeconds,
+  }) {
+    return (speed - previousSample.speed).abs() <=
+        _allowedSpeedChange(
+          previousSample: previousSample,
+          speedAccuracy: speedAccuracy,
+          elapsedSeconds: elapsedSeconds,
+        );
+  }
+
+  static double _allowedSpeedChange({
+    required AcceptedSpeedSample previousSample,
+    required SpeedAccuracyEstimate speedAccuracy,
+    required double elapsedSeconds,
+  }) {
+    return (maxPlausibleAcceleration * elapsedSeconds) +
+        previousSample.speedAccuracy.standardDeviation +
+        speedAccuracy.standardDeviation;
   }
 
   Future<bool> _checkPermissions() async {
@@ -608,6 +635,7 @@ class _SpeedSampleProcessor {
   KalmanFilter? _kalmanFilter;
   AcceptedSpeedSample? _lastAcceptedSample;
   AcceptedSpeedSample? _pendingFallbackSample;
+  AcceptedSpeedSample? _pendingStartupJumpSample;
 
   _SpeedSampleProcessor({required this.processNoise});
 
@@ -634,12 +662,14 @@ class _SpeedSampleProcessor {
       if (SpeedTracker._hasAmbiguousZeroSpeed(position)) {
         _pendingFallbackSample = null;
       }
+      _pendingStartupJumpSample = null;
       return null;
     }
 
     final acceptedSample = validation.acceptedSample;
     if (acceptedSample == null) {
       _pendingFallbackSample = null;
+      _pendingStartupJumpSample = null;
       _removeRejectedFallbackOutlier(position, validation, addedToFallbackWindow);
       return null;
     }
@@ -662,6 +692,51 @@ class _SpeedSampleProcessor {
   bool get _isStartupWarmup => _acceptedStreamSampleCount < SpeedTracker.startupWarmupAcceptedSamples;
 
   bool _shouldEmitAcceptedSample(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample? previousAcceptedSample) {
+    if (!_shouldEmitStartupSample(acceptedSample, previousAcceptedSample)) {
+      _pendingFallbackSample = null;
+      return false;
+    }
+
+    _pendingStartupJumpSample = null;
+    return _shouldEmitFallbackSample(acceptedSample, previousAcceptedSample);
+  }
+
+  bool _shouldEmitStartupSample(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample? previousAcceptedSample) {
+    if (acceptedSample.source != SpeedSampleSource.platform || !_isStartupWarmup || previousAcceptedSample == null) {
+      return true;
+    }
+
+    final elapsedSeconds =
+        acceptedSample.timestamp.difference(previousAcceptedSample.timestamp).inMicroseconds /
+        Duration.microsecondsPerSecond;
+    if (elapsedSeconds <= 0 ||
+        SpeedTracker._hasPlausibleSpeedChange(
+          previousSample: previousAcceptedSample,
+          speed: acceptedSample.speed,
+          speedAccuracy: acceptedSample.speedAccuracy,
+          elapsedSeconds: elapsedSeconds,
+        )) {
+      return true;
+    }
+
+    final pendingStartupJumpSample = _pendingStartupJumpSample;
+    if (pendingStartupJumpSample != null && _matchesPendingStartupJump(acceptedSample, pendingStartupJumpSample)) {
+      return true;
+    }
+
+    _pendingStartupJumpSample = acceptedSample;
+    return false;
+  }
+
+  bool _matchesPendingStartupJump(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample pendingStartupJumpSample) {
+    final tolerance = max(
+      SpeedTracker._startupJumpConfirmationMinTolerance,
+      pendingStartupJumpSample.speed * SpeedTracker._startupJumpConfirmationSpeedFactor,
+    );
+    return (acceptedSample.speed - pendingStartupJumpSample.speed).abs() <= tolerance;
+  }
+
+  bool _shouldEmitFallbackSample(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample? previousAcceptedSample) {
     if (acceptedSample.source == SpeedSampleSource.platform ||
         acceptedSample.speed == 0 ||
         previousAcceptedSample != null) {
@@ -698,7 +773,7 @@ class _SpeedSampleProcessor {
 
   double _filterSpeed(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample? previousAcceptedSample) {
     final existingFilter = _kalmanFilter;
-    if (_acceptedStreamSampleCount <= SpeedTracker.startupWarmupAcceptedSamples || existingFilter == null) {
+    if (existingFilter == null) {
       _kalmanFilter = _createKalmanFilter(acceptedSample);
       return acceptedSample.speed;
     }
@@ -706,11 +781,15 @@ class _SpeedSampleProcessor {
     final elapsedTime = previousAcceptedSample == null
         ? const Duration(seconds: 1)
         : acceptedSample.timestamp.difference(previousAcceptedSample.timestamp);
-    return existingFilter.update(
+    final filteredSpeed = existingFilter.update(
       acceptedSample.speed,
       acceptedSample.speedAccuracy.measurementNoise,
       elapsedTime: elapsedTime,
     );
+    if (_acceptedStreamSampleCount <= SpeedTracker.startupWarmupAcceptedSamples) {
+      return acceptedSample.speed;
+    }
+    return filteredSpeed;
   }
 
   double _accuracyFor(AcceptedSpeedSample acceptedSample) {
