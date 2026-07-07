@@ -13,6 +13,7 @@ typedef SpeedTrackerPositionStreamProvider = Stream<Position> Function(LocationS
 class SpeedTracker {
   static const double fallbackSpeedAccuracy = 2.0;
   static const double unknownSpeedConfidence = 0.25;
+  static const double _unknownHorizontalAccuracyConfidence = unknownSpeedConfidence;
   static const double maxSpeedAccuracyError = 5.0;
   static const double maxAcceptedHorizontalAccuracy = 50.0;
   static const double maxHorizontalAccuracyError = maxAcceptedHorizontalAccuracy;
@@ -156,6 +157,10 @@ class SpeedTracker {
   }
 
   static bool _appendFallbackPositionSample(List<_ValidPositionSample> samples, _ValidPositionSample sample) {
+    if (!sample.hasKnownHorizontalAccuracy) {
+      return false;
+    }
+
     if (samples.isNotEmpty && !sample.timestamp.isAfter(samples.last.timestamp)) {
       return false;
     }
@@ -175,6 +180,10 @@ class SpeedTracker {
     required bool enforceAccelerationLimit,
   }) {
     if (_hasAmbiguousZeroSpeed(position)) {
+      if (!positionSample.hasKnownHorizontalAccuracy) {
+        return null;
+      }
+
       return _createFallbackSpeedSample(
         currentSample: positionSample,
         samples: fallbackPositionSamples,
@@ -183,14 +192,16 @@ class SpeedTracker {
       );
     }
 
-    return validateSpeedSample(
+    return _validateSpeedSample(
       speed: position.speed,
       timestamp: positionSample.timestamp,
       horizontalAccuracy: positionSample.horizontalAccuracy,
-      speedAccuracy: position.speedAccuracy,
-      now: positionSample.receivedAt,
+      speedAccuracy: normalizeSpeedAccuracy(position.speedAccuracy),
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: enforceAccelerationLimit,
+      allowUnknownHorizontalAccuracy: true,
+      source: SpeedSampleSource.platform,
+      now: positionSample.receivedAt,
     );
   }
 
@@ -213,7 +224,7 @@ class SpeedTracker {
       return null;
     }
 
-    if (!position.accuracy.isFinite || position.accuracy <= 0 || position.accuracy > maxAcceptedHorizontalAccuracy) {
+    if (!_isKnownHorizontalAccuracy(position.accuracy) && !_isUnknownHorizontalAccuracy(position.accuracy)) {
       return null;
     }
 
@@ -244,6 +255,7 @@ class SpeedTracker {
       speedAccuracy: estimate.speedAccuracy,
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: enforceAccelerationLimit,
+      allowUnknownHorizontalAccuracy: false,
       source: SpeedSampleSource.positionDelta,
     );
   }
@@ -486,6 +498,24 @@ class SpeedTracker {
     );
   }
 
+  static bool _isKnownHorizontalAccuracy(double horizontalAccuracy) {
+    return horizontalAccuracy.isFinite && horizontalAccuracy > 0 && horizontalAccuracy <= maxAcceptedHorizontalAccuracy;
+  }
+
+  static bool _isUnknownHorizontalAccuracy(double horizontalAccuracy) => horizontalAccuracy == 0;
+
+  static double _horizontalAccuracyConfidence(double horizontalAccuracy) {
+    if (_isUnknownHorizontalAccuracy(horizontalAccuracy)) {
+      return _unknownHorizontalAccuracyConfidence;
+    }
+
+    if (!_isKnownHorizontalAccuracy(horizontalAccuracy)) {
+      return 0;
+    }
+
+    return 1.0 - (min(horizontalAccuracy, maxHorizontalAccuracyError) / maxHorizontalAccuracyError);
+  }
+
   static SpeedSampleValidation validateSpeedSample({
     required double speed,
     required DateTime timestamp,
@@ -502,6 +532,7 @@ class SpeedTracker {
       speedAccuracy: normalizeSpeedAccuracy(speedAccuracy),
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: enforceAccelerationLimit,
+      allowUnknownHorizontalAccuracy: false,
       source: SpeedSampleSource.platform,
       now: now,
     );
@@ -514,6 +545,7 @@ class SpeedTracker {
     required SpeedAccuracyEstimate speedAccuracy,
     required AcceptedSpeedSample? previousAcceptedSample,
     required bool enforceAccelerationLimit,
+    required bool allowUnknownHorizontalAccuracy,
     required SpeedSampleSource source,
     DateTime? now,
   }) {
@@ -532,7 +564,10 @@ class SpeedTracker {
       }
     }
 
-    if (!horizontalAccuracy.isFinite || horizontalAccuracy <= 0 || horizontalAccuracy > maxAcceptedHorizontalAccuracy) {
+    final hasKnownHorizontalAccuracy = _isKnownHorizontalAccuracy(horizontalAccuracy);
+    final hasAllowedUnknownHorizontalAccuracy =
+        allowUnknownHorizontalAccuracy && _isUnknownHorizontalAccuracy(horizontalAccuracy);
+    if (!hasKnownHorizontalAccuracy && !hasAllowedUnknownHorizontalAccuracy) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidHorizontalAccuracy);
     }
 
@@ -645,8 +680,14 @@ class _SpeedSampleProcessor {
       return null;
     }
 
+    final hasAmbiguousZeroSpeed = SpeedTracker._hasAmbiguousZeroSpeed(position);
     final addedToFallbackWindow = SpeedTracker._appendFallbackPositionSample(_fallbackPositionSamples, positionSample);
-    if (!addedToFallbackWindow && SpeedTracker._hasAmbiguousZeroSpeed(position)) {
+    if (hasAmbiguousZeroSpeed && !positionSample.hasKnownHorizontalAccuracy) {
+      _pendingFallbackSample = null;
+      _pendingStartupJumpSample = null;
+      return null;
+    }
+    if (!addedToFallbackWindow && hasAmbiguousZeroSpeed) {
       return null;
     }
 
@@ -659,7 +700,7 @@ class _SpeedSampleProcessor {
       enforceAccelerationLimit: !_isStartupWarmup,
     );
     if (validation == null) {
-      if (SpeedTracker._hasAmbiguousZeroSpeed(position)) {
+      if (hasAmbiguousZeroSpeed) {
         _pendingFallbackSample = null;
       }
       _pendingStartupJumpSample = null;
@@ -794,10 +835,7 @@ class _SpeedSampleProcessor {
 
   double _accuracyFor(AcceptedSpeedSample acceptedSample) {
     final speedConfidence = acceptedSample.speedAccuracy.confidence;
-    final positionConfidence =
-        1.0 -
-        (min(acceptedSample.horizontalAccuracy, SpeedTracker.maxHorizontalAccuracyError) /
-            SpeedTracker.maxHorizontalAccuracyError);
+    final positionConfidence = SpeedTracker._horizontalAccuracyConfidence(acceptedSample.horizontalAccuracy);
     return speedConfidence * positionConfidence;
   }
 
@@ -840,6 +878,8 @@ class _ValidPositionSample {
     required this.horizontalAccuracy,
     required this.receivedAt,
   });
+
+  bool get hasKnownHorizontalAccuracy => SpeedTracker._isKnownHorizontalAccuracy(horizontalAccuracy);
 }
 
 class _FallbackSpeedEstimate {
