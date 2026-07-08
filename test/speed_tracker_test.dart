@@ -216,7 +216,9 @@ void main() {
     });
 
     test('rejects zero-confidence horizontal accuracy', () {
-      final validation = validate(horizontalAccuracy: SpeedTracker.maxAcceptedHorizontalAccuracy);
+      final validation = validate(
+        horizontalAccuracy: SpeedTracker.maxAcceptedHorizontalAccuracy,
+      );
 
       expect(validation.isAccepted, isFalse);
       expect(
@@ -1041,6 +1043,156 @@ void main() {
         expect(harness.emittedSpeeds.last.value, closeTo(2, 0.1));
       },
     );
+  });
+
+  group('SpeedTracker.stream platform-position consistency', () {
+    final now = DateTime.utc(2026, 1, 1, 12);
+
+    test(
+      'keeps platform confidence when platform speed agrees with position regression',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 5; i++) {
+          harness.addPosition(
+            _eastwardPosition(
+              metersEast: 4.0 * i,
+              speed: 4,
+              timestamp: now.subtract(Duration(seconds: 4 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(5));
+        expect(harness.emittedSpeeds.last.value, closeTo(4, 0.1));
+        expect(
+          harness.emittedSpeeds.last.accuracy,
+          closeTo(harness.emittedSpeeds.first.accuracy, 0.000001),
+        );
+      },
+    );
+
+    test(
+      'keeps first conflicting platform speed but lowers confidence',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 4; i++) {
+          harness.addPosition(
+            _position(
+              speed: 10,
+              timestamp: now.subtract(Duration(seconds: 3 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(4));
+        expect(harness.emittedSpeeds.last.value, 10);
+        expect(
+          harness.emittedSpeeds.last.accuracy,
+          lessThan(harness.emittedSpeeds[2].accuracy),
+        );
+      },
+    );
+
+    test(
+      'switches repeated conflicting platform speed to stationary position speed',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 5; i++) {
+          harness.addPosition(
+            _position(
+              speed: 10,
+              timestamp: now.subtract(Duration(seconds: 4 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(5));
+        expect(harness.emittedSpeeds[3].value, 10);
+        expect(
+          harness.emittedSpeeds[3].accuracy,
+          lessThan(harness.emittedSpeeds[2].accuracy),
+        );
+        expect(harness.emittedSpeeds.last.value, 0);
+        expect(
+          harness.emittedSpeeds.last.accuracy,
+          closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001),
+        );
+      },
+    );
+
+    test(
+      'keeps platform confidence when position estimate uncertainty covers disagreement',
+      () async {
+        final harness = _SpeedTrackerStreamHarness(now: now);
+        addTearDown(harness.dispose);
+
+        await harness.start();
+        for (var i = 0; i < 5; i++) {
+          harness.addPosition(
+            _position(
+              speed: 10,
+              accuracy: 40,
+              timestamp: now.subtract(Duration(seconds: 4 - i)),
+            ),
+          );
+        }
+        await pumpEventQueue();
+
+        expect(harness.emittedSpeeds, hasLength(5));
+        expect(harness.emittedSpeeds.last.value, closeTo(10, 0.1));
+        expect(
+          harness.emittedSpeeds.last.accuracy,
+          closeTo(harness.emittedSpeeds.first.accuracy, 0.000001),
+        );
+      },
+    );
+
+    test('resets conflict count after platform speed agrees again', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      for (var i = 0; i < 4; i++) {
+        harness.addPosition(
+          _position(
+            speed: 8,
+            timestamp: now.subtract(Duration(seconds: 4 - i)),
+          ),
+        );
+      }
+      harness
+        ..addPosition(_position(speed: 0, timestamp: now))
+        ..addPosition(
+          _position(speed: 8, timestamp: now.add(const Duration(seconds: 1))),
+        );
+      await pumpEventQueue();
+
+      final unpenalizedAccuracy = harness.emittedSpeeds[2].accuracy;
+      expect(harness.emittedSpeeds, hasLength(6));
+      expect(harness.emittedSpeeds[3].value, 8);
+      expect(harness.emittedSpeeds[3].accuracy, lessThan(unpenalizedAccuracy));
+      expect(
+        harness.emittedSpeeds[4].accuracy,
+        closeTo(unpenalizedAccuracy, 0.000001),
+      );
+      expect(harness.emittedSpeeds.last.value, greaterThan(1));
+      expect(
+        harness.emittedSpeeds.last.accuracy,
+        lessThan(unpenalizedAccuracy),
+      );
+    });
   });
 
   group('SpeedTracker.stream freshness watchdog', () {

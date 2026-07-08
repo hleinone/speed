@@ -36,6 +36,9 @@ class SpeedTracker {
   static const double _fallbackConfirmationSpeedFactor = 0.35;
   static const double _startupJumpConfirmationMinTolerance = 1.0;
   static const double _startupJumpConfirmationSpeedFactor = 0.20;
+  static const double _platformPositionConsistencySigmaFactor = 2.0;
+  static const double _platformPositionConsistencyMinTolerance = 2.0;
+  static const double _platformPositionConsistencyMinConfidenceFactor = 0.25;
   static const Duration maxSampleAge = Duration(seconds: 5);
   static const Duration positionUpdateInterval = Duration(seconds: 1);
   static const Duration freshnessTimeout = Duration(seconds: 10);
@@ -44,6 +47,7 @@ class SpeedTracker {
   static const Duration maxFutureSampleSkew = Duration(seconds: 1);
   static const int _minFallbackRegressionSamples = 4;
   static const int startupWarmupAcceptedSamples = 3;
+  static const int _confirmedPlatformPositionConflictCount = 2;
 
   /// Process noise per second for the Kalman filter. A lower value means more smoothing but less responsiveness.
   final double processNoise;
@@ -644,6 +648,27 @@ class SpeedTracker {
         speedAccuracy.standardDeviation;
   }
 
+  static _PlatformPositionConsistencyCheck _checkPlatformPositionConsistency({
+    required AcceptedSpeedSample platformSample,
+    required _FallbackSpeedEstimate positionEstimate,
+  }) {
+    final difference = (platformSample.speed - positionEstimate.speed).abs();
+    final tolerance = max(
+      _platformPositionConsistencyMinTolerance,
+      _platformPositionConsistencySigmaFactor *
+          sqrt(platformSample.speedAccuracy.measurementNoise + positionEstimate.speedAccuracy.measurementNoise),
+    );
+
+    if (difference <= tolerance) {
+      return const _PlatformPositionConsistencyCheck(isConflict: false, confidenceFactor: 1.0);
+    }
+
+    return _PlatformPositionConsistencyCheck(
+      isConflict: true,
+      confidenceFactor: (tolerance / difference).clamp(_platformPositionConsistencyMinConfidenceFactor, 1.0),
+    );
+  }
+
   Future<bool> _checkPermissions() async {
     final platform = defaultTargetPlatform;
     LocationPermission permission = await Geolocator.checkPermission();
@@ -678,10 +703,18 @@ class _ProcessedSpeedSample {
   const _ProcessedSpeedSample({required this.speed, required this.acceptedSample});
 }
 
+class _ResolvedAcceptedSample {
+  final AcceptedSpeedSample acceptedSample;
+  final bool resetFilter;
+
+  const _ResolvedAcceptedSample({required this.acceptedSample, this.resetFilter = false});
+}
+
 class _SpeedSampleProcessor {
   final double processNoise;
   final List<_ValidPositionSample> _fallbackPositionSamples = [];
   var _acceptedStreamSampleCount = 0;
+  var _platformPositionConflictCount = 0;
   KalmanFilter? _kalmanFilter;
   AcceptedSpeedSample? _lastAcceptedSample;
   AcceptedSpeedSample? _pendingFallbackSample;
@@ -722,13 +755,21 @@ class _SpeedSampleProcessor {
       return null;
     }
 
-    final acceptedSample = validation.acceptedSample;
-    if (acceptedSample == null) {
+    final validationAcceptedSample = validation.acceptedSample;
+    if (validationAcceptedSample == null) {
       _pendingFallbackSample = null;
       _pendingStartupJumpSample = null;
       _removeRejectedFallbackOutlier(position, validation, addedToFallbackWindow);
       return null;
     }
+
+    final resolvedSample = _resolvePlatformPositionConsistency(
+      acceptedSample: validationAcceptedSample,
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: !_isStartupWarmup,
+      addedToFallbackWindow: addedToFallbackWindow,
+    );
+    final acceptedSample = resolvedSample.acceptedSample;
 
     if (!_shouldEmitAcceptedSample(acceptedSample, previousAcceptedSample)) {
       return null;
@@ -737,7 +778,7 @@ class _SpeedSampleProcessor {
     _lastAcceptedSample = acceptedSample;
     _acceptedStreamSampleCount++;
 
-    final filteredSpeed = _filterSpeed(acceptedSample, previousAcceptedSample);
+    final filteredSpeed = _filterSpeed(acceptedSample, previousAcceptedSample, resetFilter: resolvedSample.resetFilter);
     final accuracy = _accuracyFor(acceptedSample);
     return _ProcessedSpeedSample(
       speed: Speed.current(filteredSpeed.isNegative ? 0 : filteredSpeed, accuracy.clamp(0.0, 1.0)),
@@ -746,6 +787,65 @@ class _SpeedSampleProcessor {
   }
 
   bool get _isStartupWarmup => _acceptedStreamSampleCount < SpeedTracker.startupWarmupAcceptedSamples;
+
+  _ResolvedAcceptedSample _resolvePlatformPositionConsistency({
+    required AcceptedSpeedSample acceptedSample,
+    required AcceptedSpeedSample? previousAcceptedSample,
+    required bool enforceAccelerationLimit,
+    required bool addedToFallbackWindow,
+  }) {
+    if (acceptedSample.source != SpeedSampleSource.platform) {
+      _platformPositionConflictCount = 0;
+      return _ResolvedAcceptedSample(acceptedSample: acceptedSample);
+    }
+
+    if (!addedToFallbackWindow) {
+      _platformPositionConflictCount = 0;
+      return _ResolvedAcceptedSample(acceptedSample: acceptedSample);
+    }
+
+    final positionEstimate = SpeedTracker._estimateFallbackSpeed(_fallbackPositionSamples);
+    if (positionEstimate == null) {
+      _platformPositionConflictCount = 0;
+      return _ResolvedAcceptedSample(acceptedSample: acceptedSample);
+    }
+
+    final consistencyCheck = SpeedTracker._checkPlatformPositionConsistency(
+      platformSample: acceptedSample,
+      positionEstimate: positionEstimate,
+    );
+    if (!consistencyCheck.isConflict) {
+      _platformPositionConflictCount = 0;
+      return _ResolvedAcceptedSample(acceptedSample: acceptedSample);
+    }
+
+    final platformSample = acceptedSample.withPositionConsistencyConfidence(consistencyCheck.confidenceFactor);
+    _platformPositionConflictCount = min(
+      SpeedTracker._confirmedPlatformPositionConflictCount,
+      _platformPositionConflictCount + 1,
+    );
+    if (_platformPositionConflictCount < SpeedTracker._confirmedPlatformPositionConflictCount) {
+      return _ResolvedAcceptedSample(acceptedSample: platformSample);
+    }
+
+    final fallbackValidation = SpeedTracker._validateSpeedSample(
+      speed: positionEstimate.speed,
+      timestamp: acceptedSample.timestamp,
+      horizontalAccuracy: acceptedSample.horizontalAccuracy,
+      speedAccuracy: positionEstimate.speedAccuracy,
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: enforceAccelerationLimit,
+      allowUnknownHorizontalAccuracy: false,
+      allowUnknownSpeedAccuracy: true,
+      source: SpeedSampleSource.positionDelta,
+    );
+    final fallbackSample = fallbackValidation.acceptedSample;
+    if (fallbackSample == null) {
+      return _ResolvedAcceptedSample(acceptedSample: platformSample);
+    }
+
+    return _ResolvedAcceptedSample(acceptedSample: fallbackSample, resetFilter: true);
+  }
 
   bool _shouldEmitAcceptedSample(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample? previousAcceptedSample) {
     if (!_shouldEmitStartupSample(acceptedSample, previousAcceptedSample)) {
@@ -827,7 +927,16 @@ class _SpeedSampleProcessor {
     }
   }
 
-  double _filterSpeed(AcceptedSpeedSample acceptedSample, AcceptedSpeedSample? previousAcceptedSample) {
+  double _filterSpeed(
+    AcceptedSpeedSample acceptedSample,
+    AcceptedSpeedSample? previousAcceptedSample, {
+    bool resetFilter = false,
+  }) {
+    if (resetFilter) {
+      _kalmanFilter = _createKalmanFilter(acceptedSample);
+      return acceptedSample.speed;
+    }
+
     final existingFilter = _kalmanFilter;
     if (existingFilter == null) {
       _kalmanFilter = _createKalmanFilter(acceptedSample);
@@ -839,7 +948,7 @@ class _SpeedSampleProcessor {
         : acceptedSample.timestamp.difference(previousAcceptedSample.timestamp);
     final filteredSpeed = existingFilter.update(
       acceptedSample.speed,
-      acceptedSample.speedAccuracy.measurementNoise,
+      _measurementNoiseFor(acceptedSample),
       elapsedTime: elapsedTime,
     );
     if (_acceptedStreamSampleCount <= SpeedTracker.startupWarmupAcceptedSamples) {
@@ -851,15 +960,19 @@ class _SpeedSampleProcessor {
   double _accuracyFor(AcceptedSpeedSample acceptedSample) {
     final speedConfidence = acceptedSample.speedAccuracy.confidence;
     final positionConfidence = SpeedTracker._horizontalAccuracyConfidence(acceptedSample.horizontalAccuracy);
-    return speedConfidence * positionConfidence;
+    return speedConfidence * positionConfidence * acceptedSample.positionConsistencyConfidence;
   }
 
   KalmanFilter _createKalmanFilter(AcceptedSpeedSample sample) {
     return KalmanFilter(
       initialMeasurement: sample.speed,
-      initialMeasurementNoise: sample.speedAccuracy.measurementNoise,
+      initialMeasurementNoise: _measurementNoiseFor(sample),
       processNoise: processNoise,
     );
+  }
+
+  double _measurementNoiseFor(AcceptedSpeedSample sample) {
+    return sample.speedAccuracy.measurementNoise / sample.positionConsistencyConfidence;
   }
 }
 
@@ -869,6 +982,7 @@ class AcceptedSpeedSample {
   final double horizontalAccuracy;
   final SpeedAccuracyEstimate speedAccuracy;
   final SpeedSampleSource source;
+  final double positionConsistencyConfidence;
 
   const AcceptedSpeedSample({
     required this.speed,
@@ -876,7 +990,19 @@ class AcceptedSpeedSample {
     required this.horizontalAccuracy,
     required this.speedAccuracy,
     this.source = SpeedSampleSource.platform,
+    this.positionConsistencyConfidence = 1.0,
   });
+
+  AcceptedSpeedSample withPositionConsistencyConfidence(double confidence) {
+    return AcceptedSpeedSample(
+      speed: speed,
+      timestamp: timestamp,
+      horizontalAccuracy: horizontalAccuracy,
+      speedAccuracy: speedAccuracy,
+      source: source,
+      positionConsistencyConfidence: confidence,
+    );
+  }
 }
 
 class _ValidPositionSample {
@@ -902,6 +1028,13 @@ class _FallbackSpeedEstimate {
   final SpeedAccuracyEstimate speedAccuracy;
 
   const _FallbackSpeedEstimate({required this.speed, required this.speedAccuracy});
+}
+
+class _PlatformPositionConsistencyCheck {
+  final bool isConflict;
+  final double confidenceFactor;
+
+  const _PlatformPositionConsistencyCheck({required this.isConflict, required this.confidenceFactor});
 }
 
 class _FallbackRegressionResult {
