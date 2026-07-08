@@ -1,6 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:rxdart/rxdart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speed/src/generated/l10n/l10n.dart';
 import 'package:speed/src/logo.dart';
@@ -18,16 +19,25 @@ class SpeedApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Speed',
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue)).copyWith(
-        dropdownMenuTheme: const DropdownMenuThemeData(
-          inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
-        ),
-      ),
+      theme:
+          ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+          ).copyWith(
+            dropdownMenuTheme: const DropdownMenuThemeData(
+              inputDecorationTheme: InputDecorationTheme(
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ),
       darkTheme: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         dropdownMenuTheme: const DropdownMenuThemeData(
           textStyle: TextStyle(color: Colors.black),
-          inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
+          inputDecorationTheme: InputDecorationTheme(
+            border: InputBorder.none,
+            contentPadding: EdgeInsets.zero,
+          ),
         ),
       ),
       localizationsDelegates: L10n.localizationsDelegates,
@@ -44,11 +54,11 @@ class SpeedPage extends StatefulWidget {
   State<SpeedPage> createState() => _SpeedPageState();
 }
 
-class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
+class _SpeedPageState extends State<SpeedPage> {
   late NumberFormat _numberFormat;
   String? _localeName;
   final _speedTracker = SpeedTracker();
-  final _subscriptions = CompositeSubscription();
+  StreamSubscription<Speed>? _subscription;
   Speed? _speed;
   SpeedUnit _speedUnit = SpeedUnit.metersPerSecond;
 
@@ -56,20 +66,23 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
   void initState() {
     super.initState();
 
-    _speedTracker.stream
-        .listen(
-          (speed) {
-            setState(() => _speed = speed);
-          },
-          onError: (error) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
-          },
-        )
-        .addTo(_subscriptions);
+    _subscription = _speedTracker.stream.listen(
+      (speed) {
+        setState(() => _speed = speed);
+      },
+      onError: (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      },
+    );
 
     SharedPreferences.getInstance().then((sharedPreferences) {
-      final index = sharedPreferences.getInt('selected_speed_unit') ?? SpeedUnit.metersPerSecond.index;
+      final index =
+          sharedPreferences.getInt('selected_speed_unit') ??
+          SpeedUnit.metersPerSecond.index;
+      if (!mounted) return;
       setState(() => _speedUnit = SpeedUnit.values[index]);
     });
   }
@@ -86,7 +99,7 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _subscriptions.dispose();
+    _subscription?.cancel();
     super.dispose();
   }
 
@@ -105,13 +118,18 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
             requestFocusOnTap: false,
             keyboardType: TextInputType.none,
             dropdownMenuEntries: SpeedUnit.values
-                .map((u) => DropdownMenuEntry(label: u.title(context), value: u))
+                .map(
+                  (u) => DropdownMenuEntry(label: u.title(context), value: u),
+                )
                 .toList(),
             onSelected: (value) {
               if (value == null) return;
               setState(() => _speedUnit = value);
               SharedPreferences.getInstance().then((sharedPreferences) {
-                sharedPreferences.setInt('selected_speed_unit', _speedUnit.index);
+                sharedPreferences.setInt(
+                  'selected_speed_unit',
+                  _speedUnit.index,
+                );
               });
             },
           ),
@@ -125,7 +143,9 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
             if (speed == null) {
               return const CircularProgressIndicator();
             }
-            final speedText = speed.isCurrent ? _numberFormat.format(speed.getAs(_speedUnit)) : '--';
+            final speedText = speed.isCurrent
+                ? _numberFormat.format(speed.getAs(_speedUnit))
+                : '--';
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -136,11 +156,23 @@ class _SpeedPageState extends State<SpeedPage> with TickerProviderStateMixin {
                   textBaseline: TextBaseline.ideographic,
                   spacing: 8,
                   children: [
-                    Text(speedText, style: Theme.of(context).textTheme.displayLarge),
-                    Text(_speedUnit.title(context), style: Theme.of(context).textTheme.displaySmall),
+                    Text(
+                      speedText,
+                      style: Theme.of(context).textTheme.displayLarge,
+                    ),
+                    Text(
+                      _speedUnit.title(context),
+                      style: Theme.of(context).textTheme.displaySmall,
+                    ),
                   ],
                 ),
-                SizedBox(height: 8, width: 160, child: SignalStrength(value: speed.isCurrent ? speed.accuracy : 0)),
+                SizedBox(
+                  height: 8,
+                  width: 160,
+                  child: SignalStrength(
+                    value: speed.isCurrent ? speed.accuracy : 0,
+                  ),
+                ),
               ],
             );
           },

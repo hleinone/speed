@@ -35,7 +35,6 @@ dependencies:
   
   intl: any
   geolocator: ^14.0.2
-  rxdart: ^0.28.0
   shared_preferences: ^2.5.3
 
 dev_dependencies:
