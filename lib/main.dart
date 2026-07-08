@@ -19,25 +19,16 @@ class SpeedApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Speed',
-      theme:
-          ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-          ).copyWith(
-            dropdownMenuTheme: const DropdownMenuThemeData(
-              inputDecorationTheme: InputDecorationTheme(
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-          ),
+      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue)).copyWith(
+        dropdownMenuTheme: const DropdownMenuThemeData(
+          inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
+        ),
+      ),
       darkTheme: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         dropdownMenuTheme: const DropdownMenuThemeData(
           textStyle: TextStyle(color: Colors.black),
-          inputDecorationTheme: InputDecorationTheme(
-            border: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
-          ),
+          inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
         ),
       ),
       localizationsDelegates: L10n.localizationsDelegates,
@@ -72,18 +63,14 @@ class _SpeedPageState extends State<SpeedPage> {
       },
       onError: (error) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
       },
     );
 
     SharedPreferences.getInstance().then((sharedPreferences) {
-      final index =
-          sharedPreferences.getInt('selected_speed_unit') ??
-          SpeedUnit.metersPerSecond.index;
+      final index = sharedPreferences.getInt('selected_speed_unit') ?? SpeedUnit.metersPerSecond.index;
       if (!mounted) return;
-      setState(() => _speedUnit = SpeedUnit.values[index]);
+      setState(() => _speedUnit = SpeedUnit.values.elementAtOrNull(index) ?? SpeedUnit.metersPerSecond);
     });
   }
 
@@ -118,18 +105,13 @@ class _SpeedPageState extends State<SpeedPage> {
             requestFocusOnTap: false,
             keyboardType: TextInputType.none,
             dropdownMenuEntries: SpeedUnit.values
-                .map(
-                  (u) => DropdownMenuEntry(label: u.title(context), value: u),
-                )
+                .map((u) => DropdownMenuEntry(label: u.title(context), value: u))
                 .toList(),
             onSelected: (value) {
               if (value == null) return;
               setState(() => _speedUnit = value);
               SharedPreferences.getInstance().then((sharedPreferences) {
-                sharedPreferences.setInt(
-                  'selected_speed_unit',
-                  _speedUnit.index,
-                );
+                sharedPreferences.setInt('selected_speed_unit', _speedUnit.index);
               });
             },
           ),
@@ -143,9 +125,7 @@ class _SpeedPageState extends State<SpeedPage> {
             if (speed == null) {
               return const CircularProgressIndicator();
             }
-            final speedText = speed.isCurrent
-                ? _numberFormat.format(speed.getAs(_speedUnit))
-                : '--';
+            final speedText = speed.isCurrent ? _numberFormat.format(speed.getAs(_speedUnit)) : '--';
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -156,23 +136,11 @@ class _SpeedPageState extends State<SpeedPage> {
                   textBaseline: TextBaseline.ideographic,
                   spacing: 8,
                   children: [
-                    Text(
-                      speedText,
-                      style: Theme.of(context).textTheme.displayLarge,
-                    ),
-                    Text(
-                      _speedUnit.title(context),
-                      style: Theme.of(context).textTheme.displaySmall,
-                    ),
+                    Text(speedText, style: Theme.of(context).textTheme.displayLarge),
+                    Text(_speedUnit.title(context), style: Theme.of(context).textTheme.displaySmall),
                   ],
                 ),
-                SizedBox(
-                  height: 8,
-                  width: 160,
-                  child: SignalStrength(
-                    value: speed.isCurrent ? speed.accuracy : 0,
-                  ),
-                ),
+                SizedBox(height: 8, width: 160, child: SignalStrength(value: speed.isCurrent ? speed.accuracy : 0)),
               ],
             );
           },
