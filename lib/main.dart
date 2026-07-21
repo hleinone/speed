@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speed/src/animated_app_bar_gradient.dart';
 import 'package:speed/src/display_wake_lock.dart';
 import 'package:speed/src/generated/l10n/l10n.dart';
 import 'package:speed/src/logo.dart';
@@ -20,25 +21,16 @@ class SpeedApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Speed',
-      theme:
-          ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-          ).copyWith(
-            dropdownMenuTheme: const DropdownMenuThemeData(
-              inputDecorationTheme: InputDecorationTheme(
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-          ),
+      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue)).copyWith(
+        dropdownMenuTheme: const DropdownMenuThemeData(
+          inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
+        ),
+      ),
       darkTheme: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         dropdownMenuTheme: const DropdownMenuThemeData(
           textStyle: TextStyle(color: Colors.black),
-          inputDecorationTheme: InputDecorationTheme(
-            border: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
-          ),
+          inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
         ),
       ),
       localizationsDelegates: L10n.localizationsDelegates,
@@ -80,22 +72,14 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
       },
       onError: (error) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
       },
     );
 
     SharedPreferences.getInstance().then((sharedPreferences) {
-      final index =
-          sharedPreferences.getInt('selected_speed_unit') ??
-          SpeedUnit.metersPerSecond.index;
+      final index = sharedPreferences.getInt('selected_speed_unit') ?? SpeedUnit.metersPerSecond.index;
       if (!mounted) return;
-      setState(
-        () => _speedUnit =
-            SpeedUnit.values.elementAtOrNull(index) ??
-            SpeedUnit.metersPerSecond,
-      );
+      setState(() => _speedUnit = SpeedUnit.values.elementAtOrNull(index) ?? SpeedUnit.metersPerSecond);
     });
   }
 
@@ -146,6 +130,7 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        flexibleSpace: const AnimatedAppBarGradient(colors: [Color(0xFFAF0000), Color(0xFF5CB0FF)]),
         title: const Align(
           alignment: AlignmentDirectional.centerStart,
           child: SpeedLogo(height: 28, semanticLabel: 'Speed'),
@@ -157,23 +142,19 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
             requestFocusOnTap: false,
             keyboardType: TextInputType.none,
             dropdownMenuEntries: SpeedUnit.values
-                .map(
-                  (u) => DropdownMenuEntry(label: u.title(context), value: u),
-                )
+                .map((u) => DropdownMenuEntry(label: u.title(context), value: u))
                 .toList(),
             onSelected: (value) {
               if (value == null) return;
               setState(() => _speedUnit = value);
               SharedPreferences.getInstance().then((sharedPreferences) {
-                sharedPreferences.setInt(
-                  'selected_speed_unit',
-                  _speedUnit.index,
-                );
+                sharedPreferences.setInt('selected_speed_unit', _speedUnit.index);
               });
             },
           ),
         ],
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
       ),
       body: Center(
         child: Builder(
@@ -182,9 +163,7 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
             if (speed == null) {
               return const CircularProgressIndicator();
             }
-            final speedText = speed.isCurrent
-                ? _numberFormat.format(speed.getAs(_speedUnit))
-                : '--';
+            final speedText = speed.isCurrent ? _numberFormat.format(speed.getAs(_speedUnit)) : '--';
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -195,23 +174,11 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
                   textBaseline: TextBaseline.ideographic,
                   spacing: 8,
                   children: [
-                    Text(
-                      speedText,
-                      style: Theme.of(context).textTheme.displayLarge,
-                    ),
-                    Text(
-                      _speedUnit.title(context),
-                      style: Theme.of(context).textTheme.displaySmall,
-                    ),
+                    Text(speedText, style: Theme.of(context).textTheme.displayLarge),
+                    Text(_speedUnit.title(context), style: Theme.of(context).textTheme.displaySmall),
                   ],
                 ),
-                SizedBox(
-                  height: 8,
-                  width: 160,
-                  child: SignalStrength(
-                    value: speed.isCurrent ? speed.accuracy : 0,
-                  ),
-                ),
+                SizedBox(height: 8, width: 160, child: SignalStrength(value: speed.isCurrent ? speed.accuracy : 0)),
               ],
             );
           },
