@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
 import 'package:speed/main.dart';
 import 'package:speed/src/display_wake_lock.dart';
+import 'package:speed/src/speed_page.dart';
 import 'package:speed/src/speed_tracker.dart';
 
 import 'storyboard.dart';

@@ -3,14 +3,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:speed/main.dart';
 import 'package:speed/src/animated_app_bar_gradient.dart';
 import 'package:speed/src/display_wake_lock.dart';
 import 'package:speed/src/generated/l10n/l10n.dart';
 import 'package:speed/src/logo.dart';
 import 'package:speed/src/signal_strength.dart';
+import 'package:speed/src/speed_page.dart';
 import 'package:speed/src/speed_tracker.dart';
+import 'package:speed/src/speed_unit_store.dart';
 
 void main() {
   testWidgets('SpeedLogo renders as a native Flutter widget', (tester) async {
@@ -68,8 +68,6 @@ void main() {
   });
 
   testWidgets('SpeedPage keeps the display awake while mounted', (tester) async {
-    SharedPreferences.setMockInitialValues({});
-
     final screenAwake = _FakeScreenAwake();
 
     await tester.pumpWidget(
@@ -78,6 +76,7 @@ void main() {
         supportedLocales: L10n.supportedLocales,
         home: SpeedPage(
           screenAwake: screenAwake,
+          speedUnitStore: _FakeSpeedUnitStore(),
           speedStream: SpeedTracker(
             permissionChecker: () async => true,
             positionStreamProvider: (_) => const Stream<Position>.empty(),
@@ -93,9 +92,32 @@ void main() {
     expect(screenAwake.enableCalls, 1);
     expect(screenAwake.disableCalls, 0);
 
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(screenAwake.enableCalls, 2);
+
     await tester.pumpWidget(const SizedBox.shrink());
 
     expect(screenAwake.disableCalls, 1);
+  });
+
+  testWidgets('SpeedPage presents speed stream errors', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: L10n.localizationsDelegates,
+        supportedLocales: L10n.supportedLocales,
+        home: SpeedPage(
+          screenAwake: _FakeScreenAwake(),
+          speedStream: Stream<Speed>.error(StateError('GPS unavailable')),
+          speedUnitStore: _FakeSpeedUnitStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Bad state: GPS unavailable'), findsOneWidget);
   });
 
   testWidgets('SpeedPage renders an injected speed with Finnish formatting', (tester) async {
@@ -206,5 +228,17 @@ class _FakeScreenAwake implements ScreenAwake {
   @override
   Future<void> disable() async {
     disableCalls += 1;
+  }
+}
+
+class _FakeSpeedUnitStore implements SpeedUnitStore {
+  SpeedUnit unit = SpeedUnit.metersPerSecond;
+
+  @override
+  Future<SpeedUnit> load() async => unit;
+
+  @override
+  Future<void> save(SpeedUnit unit) async {
+    this.unit = unit;
   }
 }
