@@ -9,7 +9,7 @@ class PositionSampleValidator {
       return null;
     }
 
-    if (!position.longitude.isFinite || position.longitude <= -180 || position.longitude > 180) {
+    if (!position.longitude.isFinite || position.longitude < -180 || position.longitude > 180) {
       return null;
     }
 

@@ -63,9 +63,7 @@ class PositionDeltaSpeedEstimator {
     final regressionPoints = _samples
         .map((sample) {
           final t = sample.timestamp.difference(origin.timestamp).inMicroseconds / Duration.microsecondsPerSecond;
-          final x =
-              Geolocator.distanceBetween(origin.latitude, origin.longitude, origin.latitude, sample.longitude) *
-              (sample.longitude >= origin.longitude ? 1 : -1);
+          final x = _signedLongitudeDistance(origin, sample);
           final y =
               Geolocator.distanceBetween(origin.latitude, origin.longitude, sample.latitude, origin.longitude) *
               (sample.latitude >= origin.latitude ? 1 : -1);
@@ -106,6 +104,32 @@ class PositionDeltaSpeedEstimator {
     );
 
     return FallbackSpeedEstimate(speed: speed, speedAccuracy: speedAccuracy);
+  }
+
+  double _signedLongitudeDistance(ValidPositionSample origin, ValidPositionSample sample) {
+    final longitudeDelta = _shortestSignedLongitudeDelta(origin.longitude, sample.longitude);
+    if (longitudeDelta == 0) {
+      return 0;
+    }
+
+    final distance = Geolocator.distanceBetween(
+      origin.latitude,
+      origin.longitude,
+      origin.latitude,
+      origin.longitude + longitudeDelta,
+    );
+    return longitudeDelta.isNegative ? -distance : distance;
+  }
+
+  double _shortestSignedLongitudeDelta(double origin, double destination) {
+    final delta = destination - origin;
+    if (delta > 180) {
+      return delta - 360;
+    }
+    if (delta < -180) {
+      return delta + 360;
+    }
+    return delta;
   }
 
   _FallbackRegressionResult? _fitRegression(List<_FallbackRegressionPoint> points) {
