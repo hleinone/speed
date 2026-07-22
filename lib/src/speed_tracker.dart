@@ -94,9 +94,12 @@ class SpeedTracker implements SpeedTrackingSource {
   @override
   Stream<Speed> get stream async* {
     late final StreamController<Speed> controller;
+    // Cancellation is centralized in cancelPositionStream(); the lint does not follow local function calls.
+    // ignore: cancel_subscriptions
     StreamSubscription<Position>? positionStreamSubscription;
     Timer? freshnessTimer;
     Speed? lastEmittedSpeed;
+    var hasTerminated = false;
 
     final locationSettings = createLocationSettings(_platform);
     final speedProcessor = SpeedSampleProcessor(processNoise: processNoise);
@@ -107,8 +110,35 @@ class SpeedTracker implements SpeedTrackingSource {
       Error.throwWithStackTrace(_mapFailure(error, stackTrace), stackTrace);
     }
 
+    Future<void> cancelPositionStream() async {
+      final subscription = positionStreamSubscription;
+      positionStreamSubscription = null;
+      if (subscription == null) {
+        return;
+      }
+
+      try {
+        await subscription.cancel();
+      } catch (error, stackTrace) {
+        debugPrint('Failed to cancel position tracking: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+
+    void fail(Object error, StackTrace stackTrace) {
+      if (hasTerminated || controller.isClosed) {
+        return;
+      }
+
+      hasTerminated = true;
+      freshnessTimer?.cancel();
+      unawaited(cancelPositionStream());
+      controller.addError(_mapFailure(error, stackTrace), stackTrace);
+      unawaited(controller.close());
+    }
+
     void emitUnavailable() {
-      if (controller.isClosed || lastEmittedSpeed is UnavailableSpeed) {
+      if (hasTerminated || controller.isClosed || lastEmittedSpeed is UnavailableSpeed) {
         return;
       }
 
@@ -117,21 +147,48 @@ class SpeedTracker implements SpeedTrackingSource {
       lastEmittedSpeed = unavailableSpeed;
     }
 
-    void scheduleFreshnessWatchdog(AcceptedSpeedSample sample) {
+    void scheduleFreshnessWatchdog(AcceptedSpeedSample sample, DateTime now) {
       freshnessTimer?.cancel();
-      final age = _clock().difference(sample.timestamp);
+      final age = now.difference(sample.timestamp);
       final delay = freshnessTimeout - age;
       freshnessTimer = Timer(delay.isNegative ? Duration.zero : delay, emitUnavailable);
     }
 
-    void emitCurrentSpeed(CurrentSpeed speed, AcceptedSpeedSample sample) {
-      if (controller.isClosed) {
+    void emitCurrentSpeed(CurrentSpeed speed, AcceptedSpeedSample sample, DateTime now) {
+      if (hasTerminated || controller.isClosed) {
         return;
       }
 
+      scheduleFreshnessWatchdog(sample, now);
       controller.add(speed);
       lastEmittedSpeed = speed;
-      scheduleFreshnessWatchdog(sample);
+    }
+
+    void finish() {
+      if (hasTerminated || controller.isClosed) {
+        return;
+      }
+
+      freshnessTimer?.cancel();
+      emitUnavailable();
+      hasTerminated = true;
+      unawaited(controller.close());
+    }
+
+    void handlePosition(Position position) {
+      if (hasTerminated) {
+        return;
+      }
+
+      try {
+        final now = _clock();
+        final processedSample = speedProcessor.process(position, now);
+        if (processedSample != null) {
+          emitCurrentSpeed(processedSample.speed, processedSample.acceptedSample, now);
+        }
+      } catch (error, stackTrace) {
+        fail(error, stackTrace);
+      }
     }
 
     void onListen() {
@@ -139,34 +196,19 @@ class SpeedTracker implements SpeedTrackingSource {
       try {
         positionStreamSubscription = _geolocation
             .getPositionStream(locationSettings)
-            .listen(
-              (position) {
-                final processedSample = speedProcessor.process(position, _clock());
-                if (processedSample != null) {
-                  emitCurrentSpeed(processedSample.speed, processedSample.acceptedSample);
-                }
-              },
-              onError: (Object error, StackTrace stackTrace) {
-                if (!controller.isClosed) {
-                  controller.addError(_mapFailure(error, stackTrace), stackTrace);
-                }
-              },
-              onDone: () {
-                freshnessTimer?.cancel();
-                emitUnavailable();
-                unawaited(controller.close());
-              },
-            );
+            .listen(handlePosition, onError: fail, onDone: finish);
+        if (hasTerminated) {
+          unawaited(cancelPositionStream());
+        }
       } catch (error, stackTrace) {
-        freshnessTimer?.cancel();
-        controller.addError(_mapFailure(error, stackTrace), stackTrace);
-        unawaited(controller.close());
+        fail(error, stackTrace);
       }
     }
 
     Future<void> onCancel() async {
+      hasTerminated = true;
       freshnessTimer?.cancel();
-      await positionStreamSubscription?.cancel();
+      await cancelPositionStream();
     }
 
     controller = StreamController<Speed>(

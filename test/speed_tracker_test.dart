@@ -176,6 +176,108 @@ void main() {
     });
   });
 
+  group('SpeedTracker terminal failures', () {
+    final now = DateTime.utc(2026, 1, 1, 12);
+
+    test('a platform error cancels tracking and suppresses later events', () {
+      fakeAsync((async) {
+        final harness = _SpeedTrackerStreamHarness(now: now, clock: async.getClock(now).now);
+        final cause = StateError('position provider failed');
+        final stackTrace = StackTrace.current;
+
+        harness.startListening();
+        async.flushMicrotasks();
+        harness.addPosition(_position(speed: 10, timestamp: now));
+        async.flushMicrotasks();
+
+        harness.addPositionError(cause, stackTrace);
+        harness.addPositionError(StateError('second failure'), StackTrace.current);
+        harness.addPosition(_position(speed: 20, timestamp: now.add(const Duration(seconds: 1))));
+        unawaited(harness.closePositionStream());
+        async.flushMicrotasks();
+        async.elapse(SpeedTracker.freshnessTimeout);
+        async.flushMicrotasks();
+
+        expect(harness.emissions, [isA<CurrentSpeed>()]);
+        expect(harness.errors, hasLength(1));
+        final error = harness.errors.single as SpeedTrackingException;
+        expect(error.kind, SpeedTrackingFailureKind.unexpected);
+        expect(error.cause, same(cause));
+        expect(error.stackTrace, same(stackTrace));
+        expect(harness.errorStackTraces.single, same(stackTrace));
+        expect(harness.positionSubscriptionCanceled.isCompleted, isTrue);
+        expect(harness.outputDone.isCompleted, isTrue);
+
+        unawaited(harness.dispose());
+        async.flushMicrotasks();
+      });
+    });
+
+    test('maps a position callback exception and closes the stream', () async {
+      final cause = StateError('clock failed');
+      final harness = _SpeedTrackerStreamHarness(now: now, clock: () => throw cause);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness.addPosition(_position(speed: 10, timestamp: now));
+      await harness.outputDone.future;
+
+      expect(harness.emissions, isEmpty);
+      expect(harness.errors, hasLength(1));
+      final error = harness.errors.single as SpeedTrackingException;
+      expect(error.kind, SpeedTrackingFailureKind.unexpected);
+      expect(error.cause, same(cause));
+      expect(error.stackTrace, isNotNull);
+      expect(harness.errorStackTraces.single, isNot(StackTrace.empty));
+      expect(harness.positionSubscriptionCanceled.isCompleted, isTrue);
+    });
+
+    test('maps a synchronous position stream setup failure and closes the stream', () async {
+      final cause = StateError('stream setup failed');
+      final errors = <Object>[];
+      final stackTraces = <StackTrace>[];
+      final done = Completer<void>();
+      final tracker = SpeedTracker(geolocation: _FakeGeolocationGateway(positionStreamProvider: (_) => throw cause));
+      final subscription = tracker.stream.listen(
+        (_) => fail('Expected no speed values'),
+        onError: (Object error, StackTrace stackTrace) {
+          errors.add(error);
+          stackTraces.add(stackTrace);
+        },
+        onDone: done.complete,
+      );
+      addTearDown(subscription.cancel);
+
+      await done.future;
+
+      expect(errors, hasLength(1));
+      final error = errors.single as SpeedTrackingException;
+      expect(error.kind, SpeedTrackingFailureKind.unexpected);
+      expect(error.cause, same(cause));
+      expect(error.stackTrace, isNotNull);
+      expect(stackTraces.single, isNot(StackTrace.empty));
+    });
+
+    test('reads the clock once for each position', () async {
+      var clockCalls = 0;
+      final harness = _SpeedTrackerStreamHarness(
+        now: now,
+        clock: () {
+          clockCalls += 1;
+          return now;
+        },
+      );
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness.addPosition(_position(speed: 10, timestamp: now));
+      await pumpEventQueue();
+
+      expect(harness.emittedSpeeds, hasLength(1));
+      expect(clockCalls, 1);
+    });
+  });
+
   group('SpeedTracker.normalizeSpeedAccuracy', () {
     test('uses fallback noise and low confidence for zero accuracy', () {
       final estimate = SpeedTracker.normalizeSpeedAccuracy(0);
@@ -1119,16 +1221,26 @@ Position _position({
 
 class _SpeedTrackerStreamHarness {
   final SpeedTrackerClock _clock;
-  final StreamController<Position> _positionController;
+  late final StreamController<Position> _positionController;
   final Completer<void> _positionStreamRequested = Completer<void>();
+  final Completer<void> positionSubscriptionCanceled = Completer<void>();
+  final Completer<void> outputDone = Completer<void>();
   final List<Speed> emissions = [];
   final List<CurrentSpeed> emittedSpeeds = [];
+  final List<Object> errors = [];
+  final List<StackTrace> errorStackTraces = [];
   late final SpeedTracker _speedTracker;
   StreamSubscription<Speed>? _subscription;
 
-  _SpeedTrackerStreamHarness({required DateTime now, SpeedTrackerClock? clock})
-    : _clock = clock ?? (() => now),
-      _positionController = StreamController<Position>(sync: true) {
+  _SpeedTrackerStreamHarness({required DateTime now, SpeedTrackerClock? clock}) : _clock = clock ?? (() => now) {
+    _positionController = StreamController<Position>(
+      sync: true,
+      onCancel: () {
+        if (!positionSubscriptionCanceled.isCompleted) {
+          positionSubscriptionCanceled.complete();
+        }
+      },
+    );
     _speedTracker = SpeedTracker(
       clock: _clock,
       geolocation: _FakeGeolocationGateway(
@@ -1148,16 +1260,31 @@ class _SpeedTrackerStreamHarness {
   }
 
   void startListening() {
-    _subscription = _speedTracker.stream.listen((speed) {
-      emissions.add(speed);
-      if (speed case CurrentSpeed()) {
-        emittedSpeeds.add(speed);
-      }
-    });
+    _subscription = _speedTracker.stream.listen(
+      (speed) {
+        emissions.add(speed);
+        if (speed case CurrentSpeed()) {
+          emittedSpeeds.add(speed);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        errors.add(error);
+        errorStackTraces.add(stackTrace);
+      },
+      onDone: () {
+        if (!outputDone.isCompleted) {
+          outputDone.complete();
+        }
+      },
+    );
   }
 
   void addPosition(Position position) {
     _positionController.add(position);
+  }
+
+  void addPositionError(Object error, [StackTrace? stackTrace]) {
+    _positionController.addError(error, stackTrace);
   }
 
   Future<void> closePositionStream() => _positionController.close();
