@@ -11,20 +11,43 @@ class SharedPreferencesSpeedUnitStore implements SpeedUnitStore {
   const SharedPreferencesSpeedUnitStore();
 
   static const _preferenceKey = 'selected_speed_unit';
+  static const _defaultUnit = SpeedUnit.metersPerSecond;
+  static const _legacyUnitsByIndex = [
+    SpeedUnit.kilometersPerHour,
+    SpeedUnit.milesPerHour,
+    SpeedUnit.metersPerSecond,
+    SpeedUnit.footPerSecond,
+    SpeedUnit.knots,
+  ];
 
   @override
   Future<SpeedUnit> load() async {
     final preferences = await SharedPreferences.getInstance();
-    final index = preferences.getInt(_preferenceKey);
-    if (index == null || index < 0 || index >= SpeedUnit.values.length) {
-      return SpeedUnit.metersPerSecond;
+    final storedValue = preferences.get(_preferenceKey);
+    if (storedValue is String) {
+      return _unitFromName(storedValue);
     }
-    return SpeedUnit.values[index];
+    if (storedValue is! int || storedValue < 0 || storedValue >= _legacyUnitsByIndex.length) {
+      return _defaultUnit;
+    }
+
+    final unit = _legacyUnitsByIndex[storedValue];
+    await preferences.setString(_preferenceKey, unit.name);
+    return unit;
   }
 
   @override
   Future<void> save(SpeedUnit unit) async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setInt(_preferenceKey, unit.index);
+    await preferences.setString(_preferenceKey, unit.name);
+  }
+
+  SpeedUnit _unitFromName(String name) {
+    for (final unit in SpeedUnit.values) {
+      if (unit.name == name) {
+        return unit;
+      }
+    }
+    return _defaultUnit;
   }
 }
