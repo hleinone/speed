@@ -1,15 +1,16 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:speed/src/animated_app_bar_gradient.dart';
 import 'package:speed/src/display_wake_lock.dart';
 import 'package:speed/src/generated/l10n/l10n.dart';
 import 'package:speed/src/logo.dart';
 import 'package:speed/src/signal_strength.dart';
 import 'package:speed/src/speed_page.dart';
-import 'package:speed/src/speed_tracker.dart';
+import 'package:speed/src/speed_tracker/models.dart';
+import 'package:speed/src/speed_tracking_source.dart';
 import 'package:speed/src/speed_unit_store.dart';
 
 void main() {
@@ -77,10 +78,7 @@ void main() {
         home: SpeedPage(
           screenAwake: screenAwake,
           speedUnitStore: _FakeSpeedUnitStore(),
-          speedStream: SpeedTracker(
-            permissionChecker: () async => true,
-            positionStreamProvider: (_) => const Stream<Position>.empty(),
-          ).stream,
+          trackingSource: _FakeTrackingSource([const Stream<Speed>.empty()]),
         ),
       ),
     );
@@ -102,14 +100,14 @@ void main() {
     expect(screenAwake.disableCalls, 1);
   });
 
-  testWidgets('SpeedPage presents speed stream errors', (tester) async {
+  testWidgets('SpeedPage presents generic errors without exposing raw details', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         localizationsDelegates: L10n.localizationsDelegates,
         supportedLocales: L10n.supportedLocales,
         home: SpeedPage(
           screenAwake: _FakeScreenAwake(),
-          speedStream: Stream<Speed>.error(StateError('GPS unavailable')),
+          trackingSource: _FakeTrackingSource([Stream<Speed>.error(StateError('secret GPS details'))]),
           speedUnitStore: _FakeSpeedUnitStore(),
         ),
       ),
@@ -117,7 +115,109 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('Bad state: GPS unavailable'), findsOneWidget);
+    expect(find.text('Something went wrong'), findsOneWidget);
+    expect(find.text('Speed could not be measured. Please try again.'), findsOneWidget);
+    expect(find.textContaining('secret GPS details'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('SpeedPage shows permanent permission recovery and retries', (tester) async {
+    final source = _FakeTrackingSource([
+      Stream<Speed>.error(
+        SpeedTrackingException(
+          SpeedTrackingFailureKind.permissionDeniedForever,
+          cause: StateError('private platform message'),
+        ),
+      ),
+      Stream.value(const Speed.current(10, 0.75)),
+    ]);
+    await tester.pumpWidget(_speedPage(source));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Location access is needed'), findsOneWidget);
+    expect(find.text('Allow location access in app settings to measure your speed.'), findsOneWidget);
+    expect(find.text('Open app settings'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
+    expect(find.textContaining('private platform message'), findsNothing);
+
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('10'), findsOneWidget);
+    expect(source.streamCalls, 2);
+  });
+
+  testWidgets('SpeedPage explains retryable permission denial', (tester) async {
+    final source = _FakeTrackingSource([
+      Stream<Speed>.error(const SpeedTrackingException(SpeedTrackingFailureKind.permissionDenied)),
+    ]);
+    await tester.pumpWidget(_speedPage(source));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Location access is needed'), findsOneWidget);
+    expect(find.text('Allow location access to measure your speed.'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Try again'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Open app settings'), findsOneWidget);
+  });
+
+  testWidgets('SpeedPage opens location settings and retries when the app resumes', (tester) async {
+    final source = _FakeTrackingSource([
+      Stream<Speed>.error(const SpeedTrackingException(SpeedTrackingFailureKind.locationServicesDisabled)),
+      Stream.value(const Speed.current(8, 0.8)),
+    ]);
+    await tester.pumpWidget(_speedPage(source));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Location services are off'), findsOneWidget);
+    await tester.tap(find.text('Open location settings'));
+    await tester.pump();
+    expect(source.openLocationSettingsCalls, 1);
+    expect(source.streamCalls, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('8'), findsOneWidget);
+    expect(source.streamCalls, 2);
+  });
+
+  testWidgets('SpeedPage shows a localized snackbar when settings cannot open', (tester) async {
+    final source = _FakeTrackingSource([
+      Stream<Speed>.error(const SpeedTrackingException(SpeedTrackingFailureKind.preciseLocationRequired)),
+    ], appSettingsOpened: false);
+    await tester.pumpWidget(_speedPage(source));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Precise location is needed'), findsOneWidget);
+    await tester.tap(find.text('Open app settings'));
+    await tester.pump();
+
+    expect(find.text('Settings could not be opened.'), findsOneWidget);
+    expect(find.text('Precise location is needed'), findsOneWidget);
+  });
+
+  testWidgets('SpeedPage localizes acquiring and unavailable states in Finnish', (tester) async {
+    final speedStream = StreamController<Speed>();
+    final source = _FakeTrackingSource([speedStream.stream]);
+    await tester.pumpWidget(_speedPage(source, locale: const Locale('fi')));
+    await tester.pump();
+
+    expect(find.text('Haetaan nopeutta'), findsOneWidget);
+    expect(find.text('Odotetaan GPS-signaalia…'), findsOneWidget);
+
+    speedStream.add(const Speed.unavailable());
+    await tester.pump();
+
+    expect(find.text('Nopeutta ei ole saatavilla'), findsOneWidget);
+    expect(find.text('Yritä uudelleen'), findsOneWidget);
+    await speedStream.close();
   });
 
   testWidgets('SpeedPage renders an injected speed with Finnish formatting', (tester) async {
@@ -133,7 +233,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: screenAwake,
-              speedStream: Stream.value(const Speed.current(42 / 2.236936, 0.68)),
+              trackingSource: _FakeTrackingSource([Stream.value(const Speed.current(42 / 2.236936, 0.68))]),
               initialSpeedUnit: SpeedUnit.milesPerHour,
             ),
           ),
@@ -158,7 +258,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: _FakeScreenAwake(),
-              speedStream: Stream.value(const Speed.current(42 / 2.236936, 0.68)),
+              trackingSource: _FakeTrackingSource([Stream.value(const Speed.current(42 / 2.236936, 0.68))]),
               initialSpeedUnit: SpeedUnit.milesPerHour,
             ),
           ),
@@ -183,7 +283,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: _FakeScreenAwake(),
-              speedStream: Stream.value(const Speed.current(15, 0.88)),
+              trackingSource: _FakeTrackingSource([Stream.value(const Speed.current(15, 0.88))]),
               initialSpeedUnit: SpeedUnit.metersPerSecond,
             ),
           ),
@@ -201,6 +301,20 @@ void main() {
     expect(find.text('fps'), findsWidgets);
     expect(find.text('knots'), findsWidgets);
   });
+}
+
+Widget _speedPage(_FakeTrackingSource source, {Locale locale = const Locale('en')}) {
+  return MaterialApp(
+    locale: locale,
+    localizationsDelegates: L10n.localizationsDelegates,
+    supportedLocales: L10n.supportedLocales,
+    home: SpeedPage(
+      screenAwake: _FakeScreenAwake(),
+      trackingSource: source,
+      speedUnitStore: _FakeSpeedUnitStore(),
+      initialSpeedUnit: SpeedUnit.metersPerSecond,
+    ),
+  );
 }
 
 LinearGradient _appBarGradient(WidgetTester tester) {
@@ -240,5 +354,33 @@ class _FakeSpeedUnitStore implements SpeedUnitStore {
   @override
   Future<void> save(SpeedUnit unit) async {
     this.unit = unit;
+  }
+}
+
+class _FakeTrackingSource implements SpeedTrackingSource {
+  _FakeTrackingSource(this.streams, {this.appSettingsOpened = true});
+
+  final List<Stream<Speed>> streams;
+  final bool appSettingsOpened;
+  int streamCalls = 0;
+  int openAppSettingsCalls = 0;
+  int openLocationSettingsCalls = 0;
+
+  @override
+  Stream<Speed> get stream {
+    final index = streamCalls++;
+    return streams[index];
+  }
+
+  @override
+  Future<bool> openAppSettings() async {
+    openAppSettingsCalls += 1;
+    return appSettingsOpened;
+  }
+
+  @override
+  Future<bool> openLocationSettings() async {
+    openLocationSettingsCalls += 1;
+    return true;
   }
 }

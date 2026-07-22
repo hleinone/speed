@@ -29,6 +29,133 @@ void main() {
     });
   });
 
+  group('SpeedTracker location access', () {
+    test('reports disabled location services before checking permission', () async {
+      final geolocation = _FakeGeolocationGateway(serviceEnabled: false);
+
+      final error = await _firstStreamError(SpeedTracker(geolocation: geolocation));
+
+      expect(error, isA<SpeedTrackingException>());
+      expect((error as SpeedTrackingException).kind, SpeedTrackingFailureKind.locationServicesDisabled);
+      expect(geolocation.checkPermissionCalls, 0);
+    });
+
+    test('requests denied permission once and reports a continued denial', () async {
+      final geolocation = _FakeGeolocationGateway(
+        permission: LocationPermission.denied,
+        requestedPermission: LocationPermission.denied,
+      );
+
+      final error = await _firstStreamError(SpeedTracker(geolocation: geolocation));
+
+      expect((error as SpeedTrackingException).kind, SpeedTrackingFailureKind.permissionDenied);
+      expect(geolocation.requestPermissionCalls, 1);
+    });
+
+    test('preserves permanent permission denial without requesting again', () async {
+      final geolocation = _FakeGeolocationGateway(permission: LocationPermission.deniedForever);
+
+      final error = await _firstStreamError(SpeedTracker(geolocation: geolocation));
+
+      expect((error as SpeedTrackingException).kind, SpeedTrackingFailureKind.permissionDeniedForever);
+      expect(geolocation.requestPermissionCalls, 0);
+    });
+
+    test('granted permission starts position tracking', () async {
+      final geolocation = _FakeGeolocationGateway();
+
+      final speed = await SpeedTracker(geolocation: geolocation).stream.first;
+
+      expect(speed.status, SpeedStatus.unavailable);
+      expect(geolocation.positionStreamCalls, 1);
+    });
+
+    test('iOS requests temporary precision and reports continued reduced accuracy', () async {
+      final geolocation = _FakeGeolocationGateway(
+        accuracy: LocationAccuracyStatus.reduced,
+        temporaryAccuracy: LocationAccuracyStatus.reduced,
+      );
+
+      final error = await _firstStreamError(SpeedTracker(geolocation: geolocation, platform: TargetPlatform.iOS));
+
+      expect((error as SpeedTrackingException).kind, SpeedTrackingFailureKind.preciseLocationRequired);
+      expect(geolocation.temporaryAccuracyCalls, 1);
+      expect(geolocation.lastPurposeKey, 'SpeedPurposeKey');
+    });
+
+    test('iOS continues when temporary precision is granted', () async {
+      final geolocation = _FakeGeolocationGateway(
+        accuracy: LocationAccuracyStatus.reduced,
+        temporaryAccuracy: LocationAccuracyStatus.precise,
+      );
+
+      final speed = await SpeedTracker(geolocation: geolocation, platform: TargetPlatform.iOS).stream.first;
+
+      expect(speed.status, SpeedStatus.unavailable);
+      expect(geolocation.positionStreamCalls, 1);
+    });
+
+    test('Android reports reduced accuracy without requesting temporary precision', () async {
+      final geolocation = _FakeGeolocationGateway(accuracy: LocationAccuracyStatus.reduced);
+
+      final error = await _firstStreamError(SpeedTracker(geolocation: geolocation, platform: TargetPlatform.android));
+
+      expect((error as SpeedTrackingException).kind, SpeedTrackingFailureKind.preciseLocationRequired);
+      expect(geolocation.temporaryAccuracyCalls, 0);
+    });
+
+    test('unknown Android accuracy does not block tracking', () async {
+      final geolocation = _FakeGeolocationGateway(accuracy: LocationAccuracyStatus.unknown);
+
+      final speed = await SpeedTracker(geolocation: geolocation, platform: TargetPlatform.android).stream.first;
+
+      expect(speed.status, SpeedStatus.unavailable);
+      expect(geolocation.positionStreamCalls, 1);
+    });
+
+    test('maps runtime service and permission errors to typed failures', () async {
+      final serviceError = await _firstStreamError(
+        SpeedTracker(
+          geolocation: _FakeGeolocationGateway(
+            positionStream: Stream<Position>.error(const LocationServiceDisabledException()),
+          ),
+        ),
+      );
+      final permissionError = await _firstStreamError(
+        SpeedTracker(
+          geolocation: _FakeGeolocationGateway(
+            positionStream: Stream<Position>.error(const PermissionDeniedException('denied')),
+          ),
+        ),
+      );
+
+      expect((serviceError as SpeedTrackingException).kind, SpeedTrackingFailureKind.locationServicesDisabled);
+      expect((permissionError as SpeedTrackingException).kind, SpeedTrackingFailureKind.permissionDenied);
+    });
+
+    test('wraps unexpected platform errors with their cause', () async {
+      final cause = StateError('position provider failed');
+
+      final error = await _firstStreamError(
+        SpeedTracker(geolocation: _FakeGeolocationGateway(positionStream: Stream<Position>.error(cause))),
+      );
+
+      expect((error as SpeedTrackingException).kind, SpeedTrackingFailureKind.unexpected);
+      expect(error.cause, same(cause));
+      expect(error.stackTrace, isNotNull);
+    });
+
+    test('delegates app and location settings actions', () async {
+      final geolocation = _FakeGeolocationGateway(appSettingsOpened: true, locationSettingsOpened: false);
+      final tracker = SpeedTracker(geolocation: geolocation);
+
+      expect(await tracker.openAppSettings(), isTrue);
+      expect(await tracker.openLocationSettings(), isFalse);
+      expect(geolocation.openAppSettingsCalls, 1);
+      expect(geolocation.openLocationSettingsCalls, 1);
+    });
+  });
+
   group('SpeedTracker.normalizeSpeedAccuracy', () {
     test('uses fallback noise and low confidence for zero accuracy', () {
       final estimate = SpeedTracker.normalizeSpeedAccuracy(0);
@@ -822,6 +949,26 @@ void main() {
   group('SpeedTracker.stream freshness watchdog', () {
     final now = DateTime.utc(2026, 1, 1, 12);
 
+    test('emits unavailable when the first usable sample does not arrive in time', () {
+      fakeAsync((async) {
+        final harness = _SpeedTrackerStreamHarness(now: now, clock: async.getClock(now).now);
+
+        harness.startListening();
+        async.flushMicrotasks();
+        async.elapse(SpeedTracker.freshnessTimeout - const Duration(milliseconds: 1));
+        async.flushMicrotasks();
+        expect(harness.emittedSpeeds, isEmpty);
+
+        async.elapse(const Duration(milliseconds: 1));
+        async.flushMicrotasks();
+
+        unawaited(harness.dispose());
+        async.flushMicrotasks();
+
+        expect(harness.emittedSpeeds.map((speed) => speed.status), [SpeedStatus.unavailable]);
+      });
+    });
+
     test('starts from the position stream and emits a current speed', () async {
       final harness = _SpeedTrackerStreamHarness(now: now);
       addTearDown(harness.dispose);
@@ -1071,13 +1218,14 @@ class _SpeedTrackerStreamHarness {
       _positionController = StreamController<Position>(sync: true) {
     _speedTracker = SpeedTracker(
       clock: _clock,
-      permissionChecker: () async => true,
-      positionStreamProvider: (_) {
-        if (!_positionStreamRequested.isCompleted) {
-          _positionStreamRequested.complete();
-        }
-        return _positionController.stream;
-      },
+      geolocation: _FakeGeolocationGateway(
+        positionStreamProvider: (_) {
+          if (!_positionStreamRequested.isCompleted) {
+            _positionStreamRequested.complete();
+          }
+          return _positionController.stream;
+        },
+      ),
     );
   }
 
@@ -1097,5 +1245,91 @@ class _SpeedTrackerStreamHarness {
   Future<void> dispose() async {
     await _subscription?.cancel();
     await _positionController.close();
+  }
+}
+
+Future<Object> _firstStreamError(SpeedTracker tracker) async {
+  try {
+    await tracker.stream.first;
+    fail('Expected the speed stream to fail');
+  } catch (error) {
+    return error;
+  }
+}
+
+class _FakeGeolocationGateway implements GeolocationGateway {
+  _FakeGeolocationGateway({
+    this.serviceEnabled = true,
+    this.permission = LocationPermission.whileInUse,
+    LocationPermission? requestedPermission,
+    this.accuracy = LocationAccuracyStatus.precise,
+    LocationAccuracyStatus? temporaryAccuracy,
+    Stream<Position>? positionStream,
+    this.positionStreamProvider,
+    this.appSettingsOpened = true,
+    this.locationSettingsOpened = true,
+  }) : requestedPermission = requestedPermission ?? permission,
+       temporaryAccuracy = temporaryAccuracy ?? accuracy,
+       positionStream = positionStream ?? const Stream<Position>.empty();
+
+  final bool serviceEnabled;
+  final LocationPermission permission;
+  final LocationPermission requestedPermission;
+  final LocationAccuracyStatus accuracy;
+  final LocationAccuracyStatus temporaryAccuracy;
+  final Stream<Position> positionStream;
+  final Stream<Position> Function(LocationSettings settings)? positionStreamProvider;
+  final bool appSettingsOpened;
+  final bool locationSettingsOpened;
+
+  int checkPermissionCalls = 0;
+  int requestPermissionCalls = 0;
+  int temporaryAccuracyCalls = 0;
+  int positionStreamCalls = 0;
+  int openAppSettingsCalls = 0;
+  int openLocationSettingsCalls = 0;
+  String? lastPurposeKey;
+
+  @override
+  Future<LocationPermission> checkPermission() async {
+    checkPermissionCalls += 1;
+    return permission;
+  }
+
+  @override
+  Future<LocationAccuracyStatus> getLocationAccuracy() async => accuracy;
+
+  @override
+  Stream<Position> getPositionStream(LocationSettings locationSettings) {
+    positionStreamCalls += 1;
+    return positionStreamProvider?.call(locationSettings) ?? positionStream;
+  }
+
+  @override
+  Future<bool> isLocationServiceEnabled() async => serviceEnabled;
+
+  @override
+  Future<bool> openAppSettings() async {
+    openAppSettingsCalls += 1;
+    return appSettingsOpened;
+  }
+
+  @override
+  Future<bool> openLocationSettings() async {
+    openLocationSettingsCalls += 1;
+    return locationSettingsOpened;
+  }
+
+  @override
+  Future<LocationPermission> requestPermission() async {
+    requestPermissionCalls += 1;
+    return requestedPermission;
+  }
+
+  @override
+  Future<LocationAccuracyStatus> requestTemporaryFullAccuracy({required String purposeKey}) async {
+    temporaryAccuracyCalls += 1;
+    lastPurposeKey = purposeKey;
+    return temporaryAccuracy;
   }
 }

@@ -210,7 +210,9 @@ class StoreScreenshotGenerator {
                 data: MediaQuery.of(context).copyWith(disableAnimations: true, boldText: false),
                 child: SpeedPage(
                   screenAwake: const _NoOpScreenAwake(),
-                  speedStream: Stream.value(Speed.current(scenario.speedMetersPerSecond, scenario.accuracy)),
+                  trackingSource: _StaticSpeedTrackingSource(
+                    Speed.current(scenario.speedMetersPerSecond, scenario.accuracy),
+                  ),
                   initialSpeedUnit: _speedUnit(scenario.speedUnit),
                 ),
               ),
@@ -305,6 +307,21 @@ class _NoOpScreenAwake implements ScreenAwake {
 
   @override
   Future<void> enable() async {}
+}
+
+class _StaticSpeedTrackingSource implements SpeedTrackingSource {
+  const _StaticSpeedTrackingSource(this.speed);
+
+  final Speed speed;
+
+  @override
+  Stream<Speed> get stream => Stream.value(speed);
+
+  @override
+  Future<bool> openAppSettings() async => false;
+
+  @override
+  Future<bool> openLocationSettings() async => false;
 }
 
 SpeedUnit _speedUnit(String name) => SpeedUnit.values.singleWhere((unit) => unit.name == name);

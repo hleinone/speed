@@ -4,5 +4,22 @@
   "milesPerHour": "mph",
   "metersPerSecond": "m/s",
   "footPerSecond": "fps",
-  "knots": "knots"
+  "knots": "knots",
+  "acquiringSpeedTitle": "Finding your speed",
+  "acquiringSpeedMessage": "Waiting for a GPS signal…",
+  "locationPermissionDeniedTitle": "Location access is needed",
+  "locationPermissionDeniedMessage": "Allow location access to measure your speed.",
+  "locationPermissionDeniedForeverMessage": "Allow location access in app settings to measure your speed.",
+  "locationServicesDisabledTitle": "Location services are off",
+  "locationServicesDisabledMessage": "Turn on location services to measure your speed.",
+  "preciseLocationRequiredTitle": "Precise location is needed",
+  "preciseLocationRequiredMessage": "Enable precise location to measure your speed reliably.",
+  "speedUnavailableTitle": "Speed unavailable",
+  "speedUnavailableMessage": "No recent GPS signal was found. Move to an open area and try again.",
+  "speedTrackingErrorTitle": "Something went wrong",
+  "speedTrackingErrorMessage": "Speed could not be measured. Please try again.",
+  "tryAgain": "Try again",
+  "openAppSettings": "Open app settings",
+  "openLocationSettings": "Open location settings",
+  "settingsOpenFailed": "Settings could not be opened."
 }

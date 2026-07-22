@@ -6,14 +6,64 @@ import 'package:speed/src/speed_tracker/models.dart';
 import 'package:speed/src/speed_tracker/speed_sample_processor.dart';
 import 'package:speed/src/speed_tracker/speed_sample_validator.dart';
 import 'package:speed/src/speed_tracker/speed_tracker_constants.dart' as config;
+import 'package:speed/src/speed_tracking_source.dart';
 
 export 'package:speed/src/speed_tracker/models.dart';
+export 'package:speed/src/speed_tracking_source.dart';
 
 typedef SpeedTrackerClock = DateTime Function();
-typedef SpeedTrackerPermissionChecker = Future<bool> Function();
-typedef SpeedTrackerPositionStreamProvider = Stream<Position> Function(LocationSettings locationSettings);
 
-class SpeedTracker {
+abstract interface class GeolocationGateway {
+  Future<bool> isLocationServiceEnabled();
+
+  Future<LocationPermission> checkPermission();
+
+  Future<LocationPermission> requestPermission();
+
+  Future<LocationAccuracyStatus> getLocationAccuracy();
+
+  Future<LocationAccuracyStatus> requestTemporaryFullAccuracy({required String purposeKey});
+
+  Stream<Position> getPositionStream(LocationSettings locationSettings);
+
+  Future<bool> openAppSettings();
+
+  Future<bool> openLocationSettings();
+}
+
+class GeolocatorGateway implements GeolocationGateway {
+  const GeolocatorGateway();
+
+  @override
+  Future<LocationPermission> checkPermission() => Geolocator.checkPermission();
+
+  @override
+  Future<LocationAccuracyStatus> getLocationAccuracy() => Geolocator.getLocationAccuracy();
+
+  @override
+  Stream<Position> getPositionStream(LocationSettings locationSettings) {
+    return Geolocator.getPositionStream(locationSettings: locationSettings);
+  }
+
+  @override
+  Future<bool> isLocationServiceEnabled() => Geolocator.isLocationServiceEnabled();
+
+  @override
+  Future<bool> openAppSettings() => Geolocator.openAppSettings();
+
+  @override
+  Future<bool> openLocationSettings() => Geolocator.openLocationSettings();
+
+  @override
+  Future<LocationPermission> requestPermission() => Geolocator.requestPermission();
+
+  @override
+  Future<LocationAccuracyStatus> requestTemporaryFullAccuracy({required String purposeKey}) {
+    return Geolocator.requestTemporaryFullAccuracy(purposeKey: purposeKey);
+  }
+}
+
+class SpeedTracker implements SpeedTrackingSource {
   static const double fallbackSpeedAccuracy = config.fallbackSpeedAccuracy;
   static const double unknownSpeedConfidence = config.unknownSpeedConfidence;
   static const double maxSpeedAccuracyError = config.maxSpeedAccuracyError;
@@ -29,31 +79,32 @@ class SpeedTracker {
   /// Process noise per second for the Kalman filter. A lower value means more smoothing but less responsiveness.
   final double processNoise;
   final SpeedTrackerClock _clock;
-  final SpeedTrackerPermissionChecker? _permissionChecker;
-  final SpeedTrackerPositionStreamProvider? _positionStreamProvider;
+  final GeolocationGateway _geolocation;
+  final TargetPlatform _platform;
 
   SpeedTracker({
     this.processNoise = 0.1,
     SpeedTrackerClock? clock,
-    SpeedTrackerPermissionChecker? permissionChecker,
-    SpeedTrackerPositionStreamProvider? positionStreamProvider,
+    GeolocationGateway geolocation = const GeolocatorGateway(),
+    TargetPlatform? platform,
   }) : _clock = clock ?? DateTime.now,
-       _permissionChecker = permissionChecker,
-       _positionStreamProvider = positionStreamProvider;
+       _geolocation = geolocation,
+       _platform = platform ?? defaultTargetPlatform;
 
+  @override
   Stream<Speed> get stream async* {
     late final StreamController<Speed> controller;
     StreamSubscription<Position>? positionStreamSubscription;
     Timer? freshnessTimer;
-    SpeedStatus lastEmittedStatus = SpeedStatus.unavailable;
+    SpeedStatus? lastEmittedStatus;
 
-    final locationSettings = createLocationSettings(defaultTargetPlatform);
+    final locationSettings = createLocationSettings(_platform);
     final speedProcessor = SpeedSampleProcessor(processNoise: processNoise);
 
-    final hasPermission = await (_permissionChecker ?? _checkPermissions)();
-    if (!hasPermission) {
-      yield* Stream.error('Location permission denied');
-      return;
+    try {
+      await _ensureLocationAccess();
+    } catch (error, stackTrace) {
+      Error.throwWithStackTrace(_mapFailure(error, stackTrace), stackTrace);
     }
 
     void emitUnavailable() {
@@ -83,19 +134,35 @@ class SpeedTracker {
     }
 
     void onListen() {
-      positionStreamSubscription = _getPositionStream(locationSettings).listen(
-        (position) {
-          final processedSample = speedProcessor.process(position, _clock());
-          if (processedSample != null) {
-            emitCurrentSpeed(processedSample.speed, processedSample.acceptedSample);
-          }
-        },
-        onError: (error) {
-          if (!controller.isClosed) {
-            controller.addError(error);
-          }
-        },
-      );
+      freshnessTimer = Timer(freshnessTimeout, emitUnavailable);
+      try {
+        positionStreamSubscription = _geolocation
+            .getPositionStream(locationSettings)
+            .listen(
+              (position) {
+                final processedSample = speedProcessor.process(position, _clock());
+                if (processedSample != null) {
+                  emitCurrentSpeed(processedSample.speed, processedSample.acceptedSample);
+                }
+              },
+              onError: (Object error, StackTrace stackTrace) {
+                if (!controller.isClosed) {
+                  controller.addError(_mapFailure(error, stackTrace), stackTrace);
+                }
+              },
+              onDone: () {
+                freshnessTimer?.cancel();
+                if (lastEmittedStatus == null) {
+                  emitUnavailable();
+                }
+                unawaited(controller.close());
+              },
+            );
+      } catch (error, stackTrace) {
+        freshnessTimer?.cancel();
+        controller.addError(_mapFailure(error, stackTrace), stackTrace);
+        unawaited(controller.close());
+      }
     }
 
     Future<void> onCancel() async {
@@ -113,12 +180,63 @@ class SpeedTracker {
     yield* controller.stream;
   }
 
-  Stream<Position> _getPositionStream(LocationSettings locationSettings) {
-    final positionStreamProvider = _positionStreamProvider;
-    if (positionStreamProvider != null) {
-      return positionStreamProvider(locationSettings);
+  @override
+  Future<bool> openAppSettings() => _geolocation.openAppSettings();
+
+  @override
+  Future<bool> openLocationSettings() => _geolocation.openLocationSettings();
+
+  Future<void> _ensureLocationAccess() async {
+    if (!await _geolocation.isLocationServiceEnabled()) {
+      throw const SpeedTrackingException(SpeedTrackingFailureKind.locationServicesDisabled);
     }
-    return Geolocator.getPositionStream(locationSettings: locationSettings);
+
+    var permission = await _geolocation.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await _geolocation.requestPermission();
+    }
+
+    switch (permission) {
+      case LocationPermission.denied:
+        throw const SpeedTrackingException(SpeedTrackingFailureKind.permissionDenied);
+      case LocationPermission.deniedForever:
+        throw const SpeedTrackingException(SpeedTrackingFailureKind.permissionDeniedForever);
+      case LocationPermission.unableToDetermine:
+        throw const SpeedTrackingException(SpeedTrackingFailureKind.unexpected);
+      case LocationPermission.always:
+      case LocationPermission.whileInUse:
+        break;
+    }
+
+    if (_platform != TargetPlatform.android && _platform != TargetPlatform.iOS) {
+      return;
+    }
+
+    var accuracy = await _geolocation.getLocationAccuracy();
+    if (_platform == TargetPlatform.iOS && accuracy == LocationAccuracyStatus.reduced) {
+      accuracy = await _geolocation.requestTemporaryFullAccuracy(purposeKey: 'SpeedPurposeKey');
+    }
+
+    if (accuracy == LocationAccuracyStatus.reduced) {
+      throw const SpeedTrackingException(SpeedTrackingFailureKind.preciseLocationRequired);
+    }
+  }
+
+  SpeedTrackingException _mapFailure(Object error, StackTrace stackTrace) {
+    if (error is SpeedTrackingException) {
+      return error;
+    }
+    if (error is LocationServiceDisabledException) {
+      return SpeedTrackingException(
+        SpeedTrackingFailureKind.locationServicesDisabled,
+        cause: error,
+        stackTrace: stackTrace,
+      );
+    }
+    if (error is PermissionDeniedException) {
+      return SpeedTrackingException(SpeedTrackingFailureKind.permissionDenied, cause: error, stackTrace: stackTrace);
+    }
+    return SpeedTrackingException(SpeedTrackingFailureKind.unexpected, cause: error, stackTrace: stackTrace);
   }
 
   @visibleForTesting
@@ -158,31 +276,5 @@ class SpeedTracker {
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: enforceAccelerationLimit,
     );
-  }
-
-  Future<bool> _checkPermissions() async {
-    final platform = defaultTargetPlatform;
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission != LocationPermission.always && permission != LocationPermission.whileInUse) {
-      debugPrint('permission: $permission');
-      return false;
-    }
-
-    var accuracy = LocationAccuracyStatus.precise;
-    if (platform == TargetPlatform.android || platform == TargetPlatform.iOS) {
-      accuracy = await Geolocator.getLocationAccuracy();
-    }
-
-    if (platform == TargetPlatform.iOS && accuracy == LocationAccuracyStatus.reduced) {
-      accuracy = await Geolocator.requestTemporaryFullAccuracy(purposeKey: 'SpeedPurposeKey');
-    }
-
-    debugPrint('permission: $permission, accuracy: $accuracy');
-
-    return accuracy == LocationAccuracyStatus.precise;
   }
 }

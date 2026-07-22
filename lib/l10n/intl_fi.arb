@@ -4,5 +4,22 @@
   "milesPerHour": "mi/h",
   "metersPerSecond": "m/s",
   "footPerSecond": "ft/s",
-  "knots": "solmua"
+  "knots": "solmua",
+  "acquiringSpeedTitle": "Haetaan nopeutta",
+  "acquiringSpeedMessage": "Odotetaan GPS-signaalia…",
+  "locationPermissionDeniedTitle": "Sijainnin käyttöoikeus tarvitaan",
+  "locationPermissionDeniedMessage": "Salli sijainnin käyttö, jotta nopeutesi voidaan mitata.",
+  "locationPermissionDeniedForeverMessage": "Salli sijainnin käyttö sovelluksen asetuksissa, jotta nopeutesi voidaan mitata.",
+  "locationServicesDisabledTitle": "Sijaintipalvelut eivät ole käytössä",
+  "locationServicesDisabledMessage": "Ota sijaintipalvelut käyttöön nopeuden mittaamista varten.",
+  "preciseLocationRequiredTitle": "Tarkka sijainti tarvitaan",
+  "preciseLocationRequiredMessage": "Ota tarkka sijainti käyttöön, jotta nopeutesi voidaan mitata luotettavasti.",
+  "speedUnavailableTitle": "Nopeutta ei ole saatavilla",
+  "speedUnavailableMessage": "Tuoretta GPS-signaalia ei löytynyt. Siirry avoimemmalle paikalle ja yritä uudelleen.",
+  "speedTrackingErrorTitle": "Jokin meni vikaan",
+  "speedTrackingErrorMessage": "Nopeutta ei voitu mitata. Yritä uudelleen.",
+  "tryAgain": "Yritä uudelleen",
+  "openAppSettings": "Avaa sovelluksen asetukset",
+  "openLocationSettings": "Avaa sijaintiasetukset",
+  "settingsOpenFailed": "Asetuksia ei voitu avata."
 }
