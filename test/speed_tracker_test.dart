@@ -29,6 +29,29 @@ void main() {
     });
   });
 
+  group('SpeedSampleValidation', () {
+    final sample = AcceptedSpeedSample(
+      speed: 10,
+      timestamp: DateTime.utc(2026),
+      horizontalAccuracy: 5,
+      speedAccuracy: const SpeedAccuracyEstimate(standardDeviation: 0.5, confidence: 0.9, isKnown: true),
+    );
+
+    test('accepted validation contains only its non-nullable sample', () {
+      final validation = SpeedSampleValidation.accepted(sample);
+
+      expect(validation, isA<SpeedSampleAccepted>());
+      expect((validation as SpeedSampleAccepted).sample, same(sample));
+    });
+
+    test('rejected validation contains only its non-nullable reason', () {
+      const validation = SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidSpeed);
+
+      expect(validation, isA<SpeedSampleRejected>());
+      expect((validation as SpeedSampleRejected).reason, SpeedSampleRejectionReason.invalidSpeed);
+    });
+  });
+
   group('SpeedTracker location access', () {
     test('reports disabled location services before checking permission', () async {
       final geolocation = _FakeGeolocationGateway(serviceEnabled: false);
@@ -228,20 +251,18 @@ void main() {
     test('accepts a fresh, accurate, finite first sample', () {
       final validation = validate();
 
-      expect(validation.isAccepted, isTrue);
-      expect(validation.rejectionReason, isNull);
-      expect(validation.acceptedSample?.speed, 10);
-      expect(validation.acceptedSample?.timestamp, now);
+      expect(validation, isA<SpeedSampleAccepted>());
+      final sample = (validation as SpeedSampleAccepted).sample;
+      expect(sample.speed, 10);
+      expect(sample.timestamp, now);
     });
 
     test('rejects stale and far-future timestamps', () {
       final staleValidation = validate(timestamp: now.subtract(const Duration(seconds: 6)));
       final futureValidation = validate(timestamp: now.add(const Duration(seconds: 2)));
 
-      expect(staleValidation.isAccepted, isFalse);
-      expect(staleValidation.rejectionReason, SpeedSampleRejectionReason.staleTimestamp);
-      expect(futureValidation.isAccepted, isFalse);
-      expect(futureValidation.rejectionReason, SpeedSampleRejectionReason.futureTimestamp);
+      expect(staleValidation, _isRejectedFor(SpeedSampleRejectionReason.staleTimestamp));
+      expect(futureValidation, _isRejectedFor(SpeedSampleRejectionReason.futureTimestamp));
     });
 
     test('rejects zero, non-finite, and excessive horizontal accuracy', () {
@@ -250,8 +271,7 @@ void main() {
       for (final horizontalAccuracy in invalidHorizontalAccuracies) {
         final validation = validate(horizontalAccuracy: horizontalAccuracy);
 
-        expect(validation.isAccepted, isFalse);
-        expect(validation.rejectionReason, SpeedSampleRejectionReason.invalidHorizontalAccuracy);
+        expect(validation, _isRejectedFor(SpeedSampleRejectionReason.invalidHorizontalAccuracy));
       }
     });
 
@@ -261,8 +281,7 @@ void main() {
       for (final speed in invalidSpeeds) {
         final validation = validate(speed: speed);
 
-        expect(validation.isAccepted, isFalse);
-        expect(validation.rejectionReason, SpeedSampleRejectionReason.invalidSpeed);
+        expect(validation, _isRejectedFor(SpeedSampleRejectionReason.invalidSpeed));
       }
     });
 
@@ -272,8 +291,7 @@ void main() {
       for (final speedAccuracy in invalidSpeedAccuracies) {
         final validation = validate(speedAccuracy: speedAccuracy);
 
-        expect(validation.isAccepted, isFalse);
-        expect(validation.rejectionReason, SpeedSampleRejectionReason.invalidSpeedAccuracy);
+        expect(validation, _isRejectedFor(SpeedSampleRejectionReason.invalidSpeedAccuracy));
       }
     });
 
@@ -286,16 +304,14 @@ void main() {
       for (final speedAccuracy in zeroConfidenceSpeedAccuracies) {
         final validation = validate(speedAccuracy: speedAccuracy);
 
-        expect(validation.isAccepted, isFalse);
-        expect(validation.rejectionReason, SpeedSampleRejectionReason.insufficientConfidence);
+        expect(validation, _isRejectedFor(SpeedSampleRejectionReason.insufficientConfidence));
       }
     });
 
     test('rejects zero-confidence horizontal accuracy', () {
       final validation = validate(horizontalAccuracy: SpeedTracker.maxAcceptedHorizontalAccuracy);
 
-      expect(validation.isAccepted, isFalse);
-      expect(validation.rejectionReason, SpeedSampleRejectionReason.insufficientConfidence);
+      expect(validation, _isRejectedFor(SpeedSampleRejectionReason.insufficientConfidence));
     });
 
     test('accepts plausible speed changes between accepted samples', () {
@@ -303,8 +319,7 @@ void main() {
 
       final validation = validate(speed: 17, previousAcceptedSample: previousSample);
 
-      expect(validation.isAccepted, isTrue);
-      expect(validation.rejectionReason, isNull);
+      expect(validation, isA<SpeedSampleAccepted>());
     });
 
     test('rejects a large one-sample speed spike', () {
@@ -312,8 +327,7 @@ void main() {
 
       final validation = validate(speed: 30, previousAcceptedSample: previousSample);
 
-      expect(validation.isAccepted, isFalse);
-      expect(validation.rejectionReason, SpeedSampleRejectionReason.implausibleAcceleration);
+      expect(validation, _isRejectedFor(SpeedSampleRejectionReason.implausibleAcceleration));
     });
 
     test('accepts a large one-sample speed spike when acceleration limit is disabled', () {
@@ -321,16 +335,14 @@ void main() {
 
       final validation = validate(speed: 30, previousAcceptedSample: previousSample, enforceAccelerationLimit: false);
 
-      expect(validation.isAccepted, isTrue);
-      expect(validation.rejectionReason, isNull);
-      expect(validation.acceptedSample?.speed, 30);
+      expect(validation, isA<SpeedSampleAccepted>());
+      expect((validation as SpeedSampleAccepted).sample.speed, 30);
     });
 
     test('accepts first valid stream sample when no previous valid sample exists', () {
       final validation = validate(speed: 80);
 
-      expect(validation.isAccepted, isTrue);
-      expect(validation.rejectionReason, isNull);
+      expect(validation, isA<SpeedSampleAccepted>());
     });
   });
 
@@ -1163,6 +1175,10 @@ void main() {
       });
     });
   });
+}
+
+Matcher _isRejectedFor(SpeedSampleRejectionReason reason) {
+  return isA<SpeedSampleRejected>().having((validation) => validation.reason, 'reason', reason);
 }
 
 const _metersPerLongitudeDegreeAtEquator = 111319.49079327358;

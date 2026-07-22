@@ -71,12 +71,15 @@ class SpeedSampleProcessor {
       return null;
     }
 
-    final validationAcceptedSample = validation.acceptedSample;
-    if (validationAcceptedSample == null) {
-      _pendingFallbackSample = null;
-      _pendingStartupJumpSample = null;
-      _removeRejectedFallbackOutlier(position, validation, addedToFallbackWindow);
-      return null;
+    late final AcceptedSpeedSample validationAcceptedSample;
+    switch (validation) {
+      case SpeedSampleAccepted(:final sample):
+        validationAcceptedSample = sample;
+      case SpeedSampleRejected(:final reason):
+        _pendingFallbackSample = null;
+        _pendingStartupJumpSample = null;
+        _removeRejectedFallbackOutlier(position, reason, addedToFallbackWindow);
+        return null;
     }
 
     final resolvedSample = _resolvePlatformPositionConsistency(
@@ -208,12 +211,10 @@ class SpeedSampleProcessor {
       allowUnknownSpeedAccuracy: true,
       source: SpeedSampleSource.positionDelta,
     );
-    final fallbackSample = fallbackValidation.acceptedSample;
-    if (fallbackSample == null) {
-      return _ResolvedAcceptedSample(acceptedSample: platformSample);
-    }
-
-    return _ResolvedAcceptedSample(acceptedSample: fallbackSample, resetFilter: true);
+    return switch (fallbackValidation) {
+      SpeedSampleAccepted(:final sample) => _ResolvedAcceptedSample(acceptedSample: sample, resetFilter: true),
+      SpeedSampleRejected() => _ResolvedAcceptedSample(acceptedSample: platformSample),
+    };
   }
 
   _PlatformPositionConsistencyCheck _checkPlatformPositionConsistency({
@@ -309,8 +310,12 @@ class SpeedSampleProcessor {
     return false;
   }
 
-  void _removeRejectedFallbackOutlier(Position position, SpeedSampleValidation validation, bool addedToFallbackWindow) {
-    if (validation.rejectionReason == SpeedSampleRejectionReason.implausibleAcceleration &&
+  void _removeRejectedFallbackOutlier(
+    Position position,
+    SpeedSampleRejectionReason reason,
+    bool addedToFallbackWindow,
+  ) {
+    if (reason == SpeedSampleRejectionReason.implausibleAcceleration &&
         addedToFallbackWindow &&
         _speedSampleValidator.hasUnknownSpeedAccuracy(position.speedAccuracy)) {
       _positionDeltaSpeedEstimator.removeLastSample();

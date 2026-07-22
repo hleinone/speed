@@ -30,15 +30,24 @@ class AcceptedSpeedSample {
   }
 }
 
-class SpeedSampleValidation {
-  final AcceptedSpeedSample? acceptedSample;
-  final SpeedSampleRejectionReason? rejectionReason;
+sealed class SpeedSampleValidation {
+  const SpeedSampleValidation._();
 
-  const SpeedSampleValidation.accepted(this.acceptedSample) : rejectionReason = null, assert(acceptedSample != null);
+  const factory SpeedSampleValidation.accepted(AcceptedSpeedSample sample) = SpeedSampleAccepted;
 
-  const SpeedSampleValidation.rejected(this.rejectionReason) : acceptedSample = null, assert(rejectionReason != null);
+  const factory SpeedSampleValidation.rejected(SpeedSampleRejectionReason reason) = SpeedSampleRejected;
+}
 
-  bool get isAccepted => acceptedSample != null;
+final class SpeedSampleAccepted extends SpeedSampleValidation {
+  const SpeedSampleAccepted(this.sample) : super._();
+
+  final AcceptedSpeedSample sample;
+}
+
+final class SpeedSampleRejected extends SpeedSampleValidation {
+  const SpeedSampleRejected(this.reason) : super._();
+
+  final SpeedSampleRejectionReason reason;
 }
 
 enum SpeedSampleRejectionReason {
