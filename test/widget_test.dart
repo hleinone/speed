@@ -129,7 +129,7 @@ void main() {
           cause: StateError('private platform message'),
         ),
       ),
-      Stream.value(const Speed.current(10, 0.75)),
+      Stream.value(const CurrentSpeed(10, 0.75)),
     ]);
     await tester.pumpWidget(_speedPage(source));
     await tester.pump();
@@ -166,7 +166,7 @@ void main() {
   testWidgets('SpeedPage opens location settings and retries when the app resumes', (tester) async {
     final source = _FakeTrackingSource([
       Stream<Speed>.error(const SpeedTrackingException(SpeedTrackingFailureKind.locationServicesDisabled)),
-      Stream.value(const Speed.current(8, 0.8)),
+      Stream.value(const CurrentSpeed(8, 0.8)),
     ]);
     await tester.pumpWidget(_speedPage(source));
     await tester.pump();
@@ -212,7 +212,7 @@ void main() {
     expect(find.text('Haetaan nopeutta'), findsOneWidget);
     expect(find.text('Odotetaan GPS-signaalia…'), findsOneWidget);
 
-    speedStream.add(const Speed.unavailable());
+    speedStream.add(const UnavailableSpeed());
     await tester.pump();
 
     expect(find.text('Nopeutta ei ole saatavilla'), findsOneWidget);
@@ -233,7 +233,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: screenAwake,
-              trackingSource: _FakeTrackingSource([Stream.value(const Speed.current(42 / 2.236936, 0.68))]),
+              trackingSource: _FakeTrackingSource([Stream.value(const CurrentSpeed(42 / 2.236936, 0.68))]),
               initialSpeedUnit: SpeedUnit.milesPerHour,
             ),
           ),
@@ -258,7 +258,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: _FakeScreenAwake(),
-              trackingSource: _FakeTrackingSource([Stream.value(const Speed.current(42 / 2.236936, 0.68))]),
+              trackingSource: _FakeTrackingSource([Stream.value(const CurrentSpeed(42 / 2.236936, 0.68))]),
               initialSpeedUnit: SpeedUnit.milesPerHour,
             ),
           ),
@@ -272,6 +272,30 @@ void main() {
     expect(tester.widget<SignalStrength>(find.byType(SignalStrength)).value, 0.68);
   });
 
+  testWidgets('SpeedPage rounds exact unit conversions in the readout', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: L10n.localizationsDelegates,
+        supportedLocales: L10n.supportedLocales,
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: SpeedPage(
+              screenAwake: _FakeScreenAwake(),
+              trackingSource: _FakeTrackingSource([Stream.value(const CurrentSpeed(1, 0.8))]),
+              initialSpeedUnit: SpeedUnit.milesPerHour,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('2.2'), findsOneWidget);
+    expect(find.text('2.236936'), findsNothing);
+  });
+
   testWidgets('SpeedPage unit menu opens with all localized choices', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -283,7 +307,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: _FakeScreenAwake(),
-              trackingSource: _FakeTrackingSource([Stream.value(const Speed.current(15, 0.88))]),
+              trackingSource: _FakeTrackingSource([Stream.value(const CurrentSpeed(15, 0.88))]),
               initialSpeedUnit: SpeedUnit.metersPerSecond,
             ),
           ),

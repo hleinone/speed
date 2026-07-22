@@ -10,6 +10,7 @@ import 'package:speed/main.dart';
 import 'package:speed/src/display_wake_lock.dart';
 import 'package:speed/src/speed_page.dart';
 import 'package:speed/src/speed_tracker.dart';
+import 'package:speed/src/speed_unit_localization.dart';
 
 import 'storyboard.dart';
 
@@ -86,7 +87,7 @@ class StoreScreenshotGenerator {
       expect(unitMenu, findsOneWidget);
       await tester.tap(unitMenu);
       await tester.pumpAndSettle();
-      expect(find.text(_speedUnit(scenario.speedUnit).title(tester.element(unitMenu))), findsWidgets);
+      expect(find.text(_speedUnit(scenario.speedUnit).localizedTitle(tester.element(unitMenu))), findsWidgets);
     }
 
     final file = File('${outputDirectory.path}/${target.outputPath(locale)}/${scenario.fileName}');
@@ -211,7 +212,7 @@ class StoreScreenshotGenerator {
                 child: SpeedPage(
                   screenAwake: const _NoOpScreenAwake(),
                   trackingSource: _StaticSpeedTrackingSource(
-                    Speed.current(scenario.speedMetersPerSecond, scenario.accuracy),
+                    CurrentSpeed(scenario.speedMetersPerSecond, scenario.accuracy),
                   ),
                   initialSpeedUnit: _speedUnit(scenario.speedUnit),
                 ),

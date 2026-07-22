@@ -19,15 +19,16 @@ void main() {
       controller.start();
       expect(controller.state, isA<SpeedPageAcquiring>());
       await pumpEventQueue();
-      speedStream.add(const Speed.current(12, 0.8));
+      speedStream.add(const CurrentSpeed(12, 0.8));
 
       final state = controller.state as SpeedPageCurrent;
+      expect(state.speed, isA<CurrentSpeed>());
       expect(state.speed.value, 12);
       expect(state.speed.accuracy, 0.8);
     });
 
     test('maps unavailable speed and an empty stream to unavailable', () async {
-      final unavailableController = _controller(_FakeTrackingSource([Stream.value(const Speed.unavailable())]));
+      final unavailableController = _controller(_FakeTrackingSource([Stream.value(const UnavailableSpeed())]));
       final emptyController = _controller(_FakeTrackingSource([const Stream<Speed>.empty()]));
       addTearDown(unavailableController.dispose);
       addTearDown(emptyController.dispose);
@@ -95,7 +96,7 @@ void main() {
 
       controller.start();
       await pumpEventQueue();
-      first.add(const Speed.current(5, 0.5));
+      first.add(const CurrentSpeed(5, 0.5));
       expect((controller.state as SpeedPageCurrent).speed.value, 5);
 
       await controller.retry();
@@ -103,8 +104,8 @@ void main() {
       expect(controller.state, isA<SpeedPageAcquiring>());
       expect(source.streamCalls, 2);
 
-      second.add(const Speed.current(10, 0.9));
-      first.add(const Speed.current(99, 1));
+      second.add(const CurrentSpeed(10, 0.9));
+      first.add(const CurrentSpeed(99, 1));
       expect((controller.state as SpeedPageCurrent).speed.value, 10);
     });
 

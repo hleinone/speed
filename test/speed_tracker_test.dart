@@ -8,24 +8,21 @@ import 'package:speed/src/speed_tracker.dart';
 
 void main() {
   group('Speed', () {
-    test('current speed exposes value, accuracy, status, and unit conversion', () {
-      const speed = Speed.current(10, 0.75);
+    test('current speed exposes its non-nullable payload and exact unit conversion', () {
+      const speed = CurrentSpeed(1, 0.75);
 
-      expect(speed.status, SpeedStatus.current);
-      expect(speed.isCurrent, isTrue);
-      expect(speed.value, 10);
+      expect(speed, isA<Speed>());
+      expect(speed.value, 1);
       expect(speed.accuracy, 0.75);
-      expect(speed.getAs(SpeedUnit.kilometersPerHour), 36);
+      expect(speed.getAs(SpeedUnit.kilometersPerHour), 3.6);
+      expect(speed.getAs(SpeedUnit.milesPerHour), 2.236936);
     });
 
-    test('unavailable speed has no value and cannot be converted', () {
-      const speed = Speed.unavailable();
+    test('unavailable speed is a distinct variant without a numeric payload', () {
+      const speed = UnavailableSpeed();
 
-      expect(speed.status, SpeedStatus.unavailable);
-      expect(speed.isCurrent, isFalse);
-      expect(speed.value, isNull);
-      expect(speed.accuracy, 0);
-      expect(() => speed.getAs(SpeedUnit.metersPerSecond), throwsStateError);
+      expect(speed, isA<Speed>());
+      expect(speed, isA<UnavailableSpeed>());
     });
   });
 
@@ -89,7 +86,7 @@ void main() {
 
       final speed = await SpeedTracker(geolocation: geolocation).stream.first;
 
-      expect(speed.status, SpeedStatus.unavailable);
+      expect(speed, isA<UnavailableSpeed>());
       expect(geolocation.positionStreamCalls, 1);
     });
 
@@ -114,7 +111,7 @@ void main() {
 
       final speed = await SpeedTracker(geolocation: geolocation, platform: TargetPlatform.iOS).stream.first;
 
-      expect(speed.status, SpeedStatus.unavailable);
+      expect(speed, isA<UnavailableSpeed>());
       expect(geolocation.positionStreamCalls, 1);
     });
 
@@ -132,7 +129,7 @@ void main() {
 
       final speed = await SpeedTracker(geolocation: geolocation, platform: TargetPlatform.android).stream.first;
 
-      expect(speed.status, SpeedStatus.unavailable);
+      expect(speed, isA<UnavailableSpeed>());
       expect(geolocation.positionStreamCalls, 1);
     });
 
@@ -859,7 +856,7 @@ void main() {
       await pumpEventQueue();
 
       expect(harness.emittedSpeeds, hasLength(3));
-      expect(harness.emittedSpeeds.where((speed) => (speed.value ?? 0) > 20), isEmpty);
+      expect(harness.emittedSpeeds.where((speed) => speed.value > 20), isEmpty);
       expect(harness.emittedSpeeds.last.value, closeTo(2, 0.1));
     });
   });
@@ -977,7 +974,7 @@ void main() {
         unawaited(harness.dispose());
         async.flushMicrotasks();
 
-        expect(harness.emittedSpeeds.map((speed) => speed.status), [SpeedStatus.unavailable]);
+        expect(harness.emissions, [isA<UnavailableSpeed>()]);
       });
     });
 
@@ -990,7 +987,7 @@ void main() {
       await pumpEventQueue();
 
       expect(harness.emittedSpeeds, hasLength(1));
-      expect(harness.emittedSpeeds.single.status, SpeedStatus.current);
+      expect(harness.emissions.single, isA<CurrentSpeed>());
       expect(harness.emittedSpeeds.single.value, 10);
     });
 
@@ -1096,7 +1093,7 @@ void main() {
         unawaited(harness.dispose());
         async.flushMicrotasks();
 
-        expect(harness.emittedSpeeds.map((speed) => speed.status), [SpeedStatus.current]);
+        expect(harness.emissions, [isA<CurrentSpeed>()]);
       });
     });
 
@@ -1115,8 +1112,7 @@ void main() {
         unawaited(harness.dispose());
         async.flushMicrotasks();
 
-        expect(harness.emittedSpeeds.map((speed) => speed.status), [SpeedStatus.current, SpeedStatus.unavailable]);
-        expect(harness.emittedSpeeds.last.accuracy, 0);
+        expect(harness.emissions, [isA<CurrentSpeed>(), isA<UnavailableSpeed>()]);
       });
     });
 
@@ -1139,7 +1135,7 @@ void main() {
         unawaited(harness.dispose());
         async.flushMicrotasks();
 
-        expect(harness.emittedSpeeds.map((speed) => speed.status), [SpeedStatus.current, SpeedStatus.unavailable]);
+        expect(harness.emissions, [isA<CurrentSpeed>(), isA<UnavailableSpeed>()]);
       });
     });
 
@@ -1159,7 +1155,7 @@ void main() {
         async.elapse(SpeedTracker.freshnessTimeout - const Duration(milliseconds: 1));
         async.flushMicrotasks();
 
-        expect(harness.emittedSpeeds.map((speed) => speed.status), [SpeedStatus.current, SpeedStatus.current]);
+        expect(harness.emissions, [isA<CurrentSpeed>(), isA<CurrentSpeed>()]);
 
         async.elapse(const Duration(milliseconds: 1));
         async.flushMicrotasks();
@@ -1167,11 +1163,7 @@ void main() {
         unawaited(harness.dispose());
         async.flushMicrotasks();
 
-        expect(harness.emittedSpeeds.map((speed) => speed.status), [
-          SpeedStatus.current,
-          SpeedStatus.current,
-          SpeedStatus.unavailable,
-        ]);
+        expect(harness.emissions, [isA<CurrentSpeed>(), isA<CurrentSpeed>(), isA<UnavailableSpeed>()]);
       });
     });
   });
@@ -1225,7 +1217,8 @@ class _SpeedTrackerStreamHarness {
   final SpeedTrackerClock _clock;
   final StreamController<Position> _positionController;
   final Completer<void> _positionStreamRequested = Completer<void>();
-  final List<Speed> emittedSpeeds = [];
+  final List<Speed> emissions = [];
+  final List<CurrentSpeed> emittedSpeeds = [];
   late final SpeedTracker _speedTracker;
   StreamSubscription<Speed>? _subscription;
 
@@ -1251,7 +1244,12 @@ class _SpeedTrackerStreamHarness {
   }
 
   void startListening() {
-    _subscription = _speedTracker.stream.listen(emittedSpeeds.add);
+    _subscription = _speedTracker.stream.listen((speed) {
+      emissions.add(speed);
+      if (speed case CurrentSpeed()) {
+        emittedSpeeds.add(speed);
+      }
+    });
   }
 
   void addPosition(Position position) {

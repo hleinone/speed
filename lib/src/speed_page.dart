@@ -9,6 +9,7 @@ import 'package:speed/src/logo.dart';
 import 'package:speed/src/signal_strength.dart';
 import 'package:speed/src/speed_page_controller.dart';
 import 'package:speed/src/speed_tracker.dart';
+import 'package:speed/src/speed_unit_localization.dart';
 import 'package:speed/src/speed_unit_store.dart';
 
 class SpeedPage extends StatefulWidget {
@@ -246,7 +247,7 @@ class _SpeedUnitMenu extends StatelessWidget {
         surfaceTintColor: WidgetStatePropertyAll(Colors.transparent),
       ),
       dropdownMenuEntries: SpeedUnit.values
-          .map((unit) => DropdownMenuEntry(label: unit.title(context), value: unit))
+          .map((unit) => DropdownMenuEntry(label: unit.localizedTitle(context), value: unit))
           .toList(growable: false),
       onSelected: (unit) {
         if (unit != null) onSelected(unit);
@@ -258,12 +259,14 @@ class _SpeedUnitMenu extends StatelessWidget {
 class _SpeedReadout extends StatelessWidget {
   const _SpeedReadout({required this.speed, required this.speedUnit});
 
-  final Speed speed;
+  final CurrentSpeed speed;
   final SpeedUnit speedUnit;
 
   @override
   Widget build(BuildContext context) {
-    final numberFormat = NumberFormat.decimalPattern(L10n.of(context).localeName);
+    final numberFormat = NumberFormat.decimalPattern(L10n.of(context).localeName)
+      ..minimumFractionDigits = 0
+      ..maximumFractionDigits = 1;
     final speedText = numberFormat.format(speed.getAs(speedUnit));
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -276,7 +279,7 @@ class _SpeedReadout extends StatelessWidget {
           spacing: 8,
           children: [
             Text(speedText, style: Theme.of(context).textTheme.displayLarge),
-            Text(speedUnit.title(context), style: Theme.of(context).textTheme.displaySmall),
+            Text(speedUnit.localizedTitle(context), style: Theme.of(context).textTheme.displaySmall),
           ],
         ),
         SizedBox(height: 8, width: 160, child: SignalStrength(value: speed.accuracy)),

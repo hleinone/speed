@@ -96,7 +96,7 @@ class SpeedTracker implements SpeedTrackingSource {
     late final StreamController<Speed> controller;
     StreamSubscription<Position>? positionStreamSubscription;
     Timer? freshnessTimer;
-    SpeedStatus? lastEmittedStatus;
+    Speed? lastEmittedSpeed;
 
     final locationSettings = createLocationSettings(_platform);
     final speedProcessor = SpeedSampleProcessor(processNoise: processNoise);
@@ -108,12 +108,13 @@ class SpeedTracker implements SpeedTrackingSource {
     }
 
     void emitUnavailable() {
-      if (controller.isClosed || lastEmittedStatus == SpeedStatus.unavailable) {
+      if (controller.isClosed || lastEmittedSpeed is UnavailableSpeed) {
         return;
       }
 
-      controller.add(const Speed.unavailable());
-      lastEmittedStatus = SpeedStatus.unavailable;
+      const unavailableSpeed = UnavailableSpeed();
+      controller.add(unavailableSpeed);
+      lastEmittedSpeed = unavailableSpeed;
     }
 
     void scheduleFreshnessWatchdog(AcceptedSpeedSample sample) {
@@ -123,13 +124,13 @@ class SpeedTracker implements SpeedTrackingSource {
       freshnessTimer = Timer(delay.isNegative ? Duration.zero : delay, emitUnavailable);
     }
 
-    void emitCurrentSpeed(Speed speed, AcceptedSpeedSample sample) {
+    void emitCurrentSpeed(CurrentSpeed speed, AcceptedSpeedSample sample) {
       if (controller.isClosed) {
         return;
       }
 
       controller.add(speed);
-      lastEmittedStatus = SpeedStatus.current;
+      lastEmittedSpeed = speed;
       scheduleFreshnessWatchdog(sample);
     }
 
@@ -152,7 +153,7 @@ class SpeedTracker implements SpeedTrackingSource {
               },
               onDone: () {
                 freshnessTimer?.cancel();
-                if (lastEmittedStatus == null) {
+                if (lastEmittedSpeed == null) {
                   emitUnavailable();
                 }
                 unawaited(controller.close());

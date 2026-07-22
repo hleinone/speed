@@ -16,7 +16,7 @@ final class SpeedPageAcquiring extends SpeedPageState {
 final class SpeedPageCurrent extends SpeedPageState {
   const SpeedPageCurrent(this.speed);
 
-  final Speed speed;
+  final CurrentSpeed speed;
 }
 
 final class SpeedPageUnavailable extends SpeedPageState {
@@ -138,7 +138,10 @@ class SpeedPageController extends ChangeNotifier {
 
   void _handleSpeed(Speed speed, int generation) {
     if (_isDisposed || generation != _trackingGeneration) return;
-    _setState(speed.isCurrent ? SpeedPageCurrent(speed) : const SpeedPageUnavailable());
+    _setState(switch (speed) {
+      CurrentSpeed() => SpeedPageCurrent(speed),
+      UnavailableSpeed() => const SpeedPageUnavailable(),
+    });
   }
 
   void _handleTrackingError(Object error, StackTrace stackTrace, int generation) {

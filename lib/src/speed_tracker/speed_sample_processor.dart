@@ -19,7 +19,7 @@ const double _platformPositionConsistencyMinConfidenceFactor = 0.25;
 const int _confirmedPlatformPositionConflictCount = 2;
 
 class ProcessedSpeedSample {
-  final Speed speed;
+  final CurrentSpeed speed;
   final AcceptedSpeedSample acceptedSample;
 
   const ProcessedSpeedSample({required this.speed, required this.acceptedSample});
@@ -100,7 +100,7 @@ class SpeedSampleProcessor {
     final filteredSpeed = _filterSpeed(acceptedSample, previousAcceptedSample, resetFilter: resolvedSample.resetFilter);
     final accuracy = _accuracyFor(acceptedSample);
     return ProcessedSpeedSample(
-      speed: Speed.current(filteredSpeed.isNegative ? 0 : filteredSpeed, accuracy.clamp(0.0, 1.0)),
+      speed: CurrentSpeed(filteredSpeed.isNegative ? 0 : filteredSpeed, accuracy.clamp(0.0, 1.0)),
       acceptedSample: acceptedSample,
     );
   }
