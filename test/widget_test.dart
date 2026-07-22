@@ -9,6 +9,7 @@ import 'package:speed/src/animated_app_bar_gradient.dart';
 import 'package:speed/src/display_wake_lock.dart';
 import 'package:speed/src/generated/l10n/l10n.dart';
 import 'package:speed/src/logo.dart';
+import 'package:speed/src/signal_strength.dart';
 import 'package:speed/src/speed_tracker.dart';
 
 void main() {
@@ -77,10 +78,10 @@ void main() {
         supportedLocales: L10n.supportedLocales,
         home: SpeedPage(
           screenAwake: screenAwake,
-          speedTracker: SpeedTracker(
+          speedStream: SpeedTracker(
             permissionChecker: () async => true,
             positionStreamProvider: (_) => const Stream<Position>.empty(),
-          ),
+          ).stream,
         ),
       ),
     );
@@ -95,6 +96,88 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
 
     expect(screenAwake.disableCalls, 1);
+  });
+
+  testWidgets('SpeedPage renders an injected speed with Finnish formatting', (tester) async {
+    final screenAwake = _FakeScreenAwake();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('fi'),
+        localizationsDelegates: L10n.localizationsDelegates,
+        supportedLocales: L10n.supportedLocales,
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: SpeedPage(
+              screenAwake: screenAwake,
+              speedStream: Stream.value(const Speed.current(42 / 2.236936, 0.68)),
+              initialSpeedUnit: SpeedUnit.milesPerHour,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('42'), findsOneWidget);
+    expect(find.text('mi/h'), findsWidgets);
+    expect(find.byType(SignalStrength), findsOneWidget);
+  });
+
+  testWidgets('SpeedPage renders an injected speed with English formatting', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: L10n.localizationsDelegates,
+        supportedLocales: L10n.supportedLocales,
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: SpeedPage(
+              screenAwake: _FakeScreenAwake(),
+              speedStream: Stream.value(const Speed.current(42 / 2.236936, 0.68)),
+              initialSpeedUnit: SpeedUnit.milesPerHour,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('42'), findsOneWidget);
+    expect(find.text('mph'), findsWidgets);
+    expect(tester.widget<SignalStrength>(find.byType(SignalStrength)).value, 0.68);
+  });
+
+  testWidgets('SpeedPage unit menu opens with all localized choices', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: L10n.localizationsDelegates,
+        supportedLocales: L10n.supportedLocales,
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: SpeedPage(
+              screenAwake: _FakeScreenAwake(),
+              speedStream: Stream.value(const Speed.current(15, 0.88)),
+              initialSpeedUnit: SpeedUnit.metersPerSecond,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownMenu<SpeedUnit>));
+    await tester.pumpAndSettle();
+
+    expect(find.text('km/h'), findsWidgets);
+    expect(find.text('mph'), findsWidgets);
+    expect(find.text('m/s'), findsWidgets);
+    expect(find.text('fps'), findsWidgets);
+    expect(find.text('knots'), findsWidgets);
   });
 }
 

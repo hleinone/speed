@@ -15,17 +15,36 @@ void main() {
 }
 
 class SpeedApp extends StatelessWidget {
-  const SpeedApp({super.key});
+  const SpeedApp({
+    super.key,
+    this.locale,
+    this.home = const SpeedPage(),
+    this.themeMode,
+    this.fontFamily,
+    this.debugShowCheckedModeBanner = true,
+  });
+
+  final Locale? locale;
+  final Widget home;
+  final ThemeMode? themeMode;
+  final String? fontFamily;
+  final bool debugShowCheckedModeBanner;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Speed',
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue)).copyWith(
-        dropdownMenuTheme: const DropdownMenuThemeData(
-          inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
-        ),
-      ),
+      debugShowCheckedModeBanner: debugShowCheckedModeBanner,
+      locale: locale,
+      theme:
+          ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+            fontFamily: fontFamily,
+          ).copyWith(
+            dropdownMenuTheme: const DropdownMenuThemeData(
+              inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
+            ),
+          ),
       darkTheme: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         dropdownMenuTheme: const DropdownMenuThemeData(
@@ -33,18 +52,20 @@ class SpeedApp extends StatelessWidget {
           inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
         ),
       ),
+      themeMode: themeMode ?? ThemeMode.system,
       localizationsDelegates: L10n.localizationsDelegates,
       supportedLocales: L10n.supportedLocales,
-      home: const SpeedPage(),
+      home: home,
     );
   }
 }
 
 class SpeedPage extends StatefulWidget {
-  const SpeedPage({super.key, this.screenAwake, this.speedTracker});
+  const SpeedPage({super.key, this.screenAwake, this.speedStream, this.initialSpeedUnit});
 
   final ScreenAwake? screenAwake;
-  final SpeedTracker? speedTracker;
+  final Stream<Speed>? speedStream;
+  final SpeedUnit? initialSpeedUnit;
 
   @override
   State<SpeedPage> createState() => _SpeedPageState();
@@ -54,10 +75,9 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
   late NumberFormat _numberFormat;
   String? _localeName;
   late final _screenAwake = widget.screenAwake ?? const DisplayWakeLock();
-  late final _speedTracker = widget.speedTracker ?? SpeedTracker();
   StreamSubscription<Speed>? _subscription;
   Speed? _speed;
-  SpeedUnit _speedUnit = SpeedUnit.metersPerSecond;
+  late SpeedUnit _speedUnit;
 
   @override
   void initState() {
@@ -66,7 +86,10 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     unawaited(_enableScreenAwake());
 
-    _subscription = _speedTracker.stream.listen(
+    _speedUnit = widget.initialSpeedUnit ?? SpeedUnit.metersPerSecond;
+
+    final speedStream = widget.speedStream ?? SpeedTracker().stream;
+    _subscription = speedStream.listen(
       (speed) {
         setState(() => _speed = speed);
       },
@@ -76,11 +99,13 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
       },
     );
 
-    SharedPreferences.getInstance().then((sharedPreferences) {
-      final index = sharedPreferences.getInt('selected_speed_unit') ?? SpeedUnit.metersPerSecond.index;
-      if (!mounted) return;
-      setState(() => _speedUnit = SpeedUnit.values.elementAtOrNull(index) ?? SpeedUnit.metersPerSecond);
-    });
+    if (widget.initialSpeedUnit == null) {
+      SharedPreferences.getInstance().then((sharedPreferences) {
+        final index = sharedPreferences.getInt('selected_speed_unit') ?? SpeedUnit.metersPerSecond.index;
+        if (!mounted) return;
+        setState(() => _speedUnit = SpeedUnit.values.elementAtOrNull(index) ?? SpeedUnit.metersPerSecond);
+      });
+    }
   }
 
   @override
@@ -138,9 +163,15 @@ class _SpeedPageState extends State<SpeedPage> with WidgetsBindingObserver {
         actions: [
           DropdownMenu(
             initialSelection: _speedUnit,
+            textAlign: TextAlign.end,
             enableSearch: false,
             requestFocusOnTap: false,
             keyboardType: TextInputType.none,
+            menuStyle: const MenuStyle(
+              elevation: WidgetStatePropertyAll(0),
+              shadowColor: WidgetStatePropertyAll(Colors.transparent),
+              surfaceTintColor: WidgetStatePropertyAll(Colors.transparent),
+            ),
             dropdownMenuEntries: SpeedUnit.values
                 .map((u) => DropdownMenuEntry(label: u.title(context), value: u))
                 .toList(),

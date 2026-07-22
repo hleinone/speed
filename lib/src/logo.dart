@@ -8,31 +8,18 @@ class SpeedLogo extends StatelessWidget {
   final Color? color;
   final String? semanticLabel;
 
-  const SpeedLogo({
-    super.key,
-    this.width,
-    this.height,
-    this.color,
-    this.semanticLabel,
-  });
+  const SpeedLogo({super.key, this.width, this.height, this.color, this.semanticLabel});
 
   @override
   Widget build(BuildContext context) {
     final effectiveColor =
-        color ??
-        IconTheme.of(context).color ??
-        DefaultTextStyle.of(context).style.color ??
-        Colors.black;
+        color ?? IconTheme.of(context).color ?? DefaultTextStyle.of(context).style.color ?? Colors.black;
 
-    Widget logo = CustomPaint(
-      painter: _SpeedLogoPainter(effectiveColor),
-      child: const SizedBox.expand(),
-    );
+    Widget logo = CustomPaint(painter: _SpeedLogoPainter(effectiveColor), child: const SizedBox.expand());
     logo = AspectRatio(aspectRatio: _SpeedLogoPainter.aspectRatio, child: logo);
     logo = SizedBox(
       width: width ?? (height == null ? _SpeedLogoPainter.viewBox.width : null),
-      height:
-          height ?? (width == null ? _SpeedLogoPainter.viewBox.height : null),
+      height: height ?? (width == null ? _SpeedLogoPainter.viewBox.height : null),
       child: logo,
     );
 
@@ -55,14 +42,8 @@ class _SpeedLogoPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final scale = math.min(
-      size.width / viewBox.width,
-      size.height / viewBox.height,
-    );
-    final offset = Offset(
-      (size.width - viewBox.width * scale) / 2,
-      (size.height - viewBox.height * scale) / 2,
-    );
+    final scale = math.min(size.width / viewBox.width, size.height / viewBox.height);
+    final offset = Offset((size.width - viewBox.width * scale) / 2, (size.height - viewBox.height * scale) / 2);
     final fillPaint = Paint()
       ..color = color
       ..isAntiAlias = true
@@ -111,8 +92,7 @@ final _logoLetterPaths = <Path>[
   _logoLetterDPath(),
 ];
 
-final _speedLinesClipPath = _createSpeedLinesClipPath()
-  ..fillType = PathFillType.evenOdd;
+final _speedLinesClipPath = _createSpeedLinesClipPath()..fillType = PathFillType.evenOdd;
 
 final _speedLinePaths = <Path>[
   _speedLine1Path(),
