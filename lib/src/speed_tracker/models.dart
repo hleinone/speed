@@ -50,8 +50,6 @@ final class SpeedSampleRejected extends SpeedSampleValidation {
 enum SpeedSampleRejectionReason {
   invalidSpeed,
   invalidSpeedAccuracy,
-  staleTimestamp,
-  futureTimestamp,
   invalidHorizontalAccuracy,
   insufficientConfidence,
   nonIncreasingTimestamp,

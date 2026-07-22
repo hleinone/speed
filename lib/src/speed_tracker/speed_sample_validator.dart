@@ -27,76 +27,74 @@ class SpeedSampleValidator {
 
   bool hasUnknownSpeedAccuracy(double speedAccuracy) => !isKnownSpeedAccuracy(speedAccuracy);
 
-  SpeedSampleValidation validate({
+  SpeedSampleValidation validatePlatformSample({
     required double speed,
-    required DateTime timestamp,
-    required double horizontalAccuracy,
     required double speedAccuracy,
-    required DateTime now,
+    required ValidPositionSample positionSample,
     AcceptedSpeedSample? previousAcceptedSample,
     bool enforceAccelerationLimit = true,
   }) {
-    return validateAcceptedSample(
-      speed: speed,
-      timestamp: timestamp,
-      horizontalAccuracy: horizontalAccuracy,
-      speedAccuracy: normalizeSpeedAccuracy(speedAccuracy),
-      previousAcceptedSample: previousAcceptedSample,
-      enforceAccelerationLimit: enforceAccelerationLimit,
-      allowUnknownHorizontalAccuracy: false,
-      allowUnknownSpeedAccuracy: false,
-      source: SpeedSampleSource.platform,
-      now: now,
-    );
-  }
-
-  SpeedSampleValidation validateAcceptedSample({
-    required double speed,
-    required DateTime timestamp,
-    required double horizontalAccuracy,
-    required SpeedAccuracyEstimate speedAccuracy,
-    required AcceptedSpeedSample? previousAcceptedSample,
-    required bool enforceAccelerationLimit,
-    required bool allowUnknownHorizontalAccuracy,
-    required bool allowUnknownSpeedAccuracy,
-    required SpeedSampleSource source,
-    DateTime? now,
-  }) {
-    if (!speed.isFinite || speed < 0) {
+    if (!_isValidSpeed(speed)) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidSpeed);
     }
 
-    final receivedAt = now;
-    if (receivedAt != null) {
-      if (timestamp.difference(receivedAt) > config.maxFutureSampleSkew) {
-        return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.futureTimestamp);
-      }
-
-      if (receivedAt.difference(timestamp) > config.maxSampleAge) {
-        return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.staleTimestamp);
-      }
-    }
-
-    final hasKnownHorizontalAccuracy = PositionSampleValidator.isKnownHorizontalAccuracy(horizontalAccuracy);
-    final hasAllowedUnknownHorizontalAccuracy =
-        allowUnknownHorizontalAccuracy && PositionSampleValidator.isUnknownHorizontalAccuracy(horizontalAccuracy);
-    if (!hasKnownHorizontalAccuracy && !hasAllowedUnknownHorizontalAccuracy) {
-      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidHorizontalAccuracy);
-    }
-
-    if (!speedAccuracy.isKnown && (!allowUnknownSpeedAccuracy || source != SpeedSampleSource.positionDelta)) {
+    final normalizedSpeedAccuracy = normalizeSpeedAccuracy(speedAccuracy);
+    if (!normalizedSpeedAccuracy.isKnown) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidSpeedAccuracy);
     }
 
+    return _validateSample(
+      speed: speed,
+      positionSample: positionSample,
+      speedAccuracy: normalizedSpeedAccuracy,
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: enforceAccelerationLimit,
+      source: SpeedSampleSource.platform,
+    );
+  }
+
+  SpeedSampleValidation validatePositionDeltaSample({
+    required double speed,
+    required SpeedAccuracyEstimate speedAccuracy,
+    required ValidPositionSample positionSample,
+    AcceptedSpeedSample? previousAcceptedSample,
+    bool enforceAccelerationLimit = true,
+  }) {
+    if (!_isValidSpeed(speed)) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidSpeed);
+    }
+
+    if (!positionSample.hasKnownHorizontalAccuracy) {
+      return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.invalidHorizontalAccuracy);
+    }
+
+    return _validateSample(
+      speed: speed,
+      positionSample: positionSample,
+      speedAccuracy: speedAccuracy,
+      previousAcceptedSample: previousAcceptedSample,
+      enforceAccelerationLimit: enforceAccelerationLimit,
+      source: SpeedSampleSource.positionDelta,
+    );
+  }
+
+  SpeedSampleValidation _validateSample({
+    required double speed,
+    required ValidPositionSample positionSample,
+    required SpeedAccuracyEstimate speedAccuracy,
+    required AcceptedSpeedSample? previousAcceptedSample,
+    required bool enforceAccelerationLimit,
+    required SpeedSampleSource source,
+  }) {
     if (speedAccuracy.confidence <= 0 ||
-        PositionSampleValidator.horizontalAccuracyConfidence(horizontalAccuracy) <= 0) {
+        PositionSampleValidator.horizontalAccuracyConfidence(positionSample.horizontalAccuracy) <= 0) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.insufficientConfidence);
     }
 
     final acceptedSample = AcceptedSpeedSample(
       speed: speed,
-      timestamp: timestamp,
-      horizontalAccuracy: horizontalAccuracy,
+      timestamp: positionSample.timestamp,
+      horizontalAccuracy: positionSample.horizontalAccuracy,
       speedAccuracy: speedAccuracy,
       source: source,
     );
@@ -106,7 +104,7 @@ class SpeedSampleValidator {
     }
 
     final elapsedSeconds =
-        timestamp.difference(previousSample.timestamp).inMicroseconds / Duration.microsecondsPerSecond;
+        positionSample.timestamp.difference(previousSample.timestamp).inMicroseconds / Duration.microsecondsPerSecond;
     if (elapsedSeconds <= 0) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.nonIncreasingTimestamp);
     }
@@ -126,6 +124,8 @@ class SpeedSampleValidator {
 
     return SpeedSampleValidation.accepted(acceptedSample);
   }
+
+  bool _isValidSpeed(double speed) => speed.isFinite && speed >= 0;
 
   bool hasPlausibleSpeedChange({
     required AcceptedSpeedSample previousSample,

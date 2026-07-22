@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speed/src/speed_tracker/models.dart';
 import 'package:speed/src/speed_tracker/platform_position_reconciler.dart';
 import 'package:speed/src/speed_tracker/position_delta_speed_estimator.dart';
+import 'package:speed/src/speed_tracker/position_sample_validator.dart';
 
 void main() {
   final timestamp = DateTime.utc(2026, 1, 1, 12);
@@ -117,6 +118,7 @@ ReconciledSpeedSample _reconcile(
 }) {
   return reconciler.reconcile(
     candidate: candidate,
+    positionSample: _positionSample(candidate),
     positionEstimate: positionSpeed == null
         ? null
         : FallbackSpeedEstimate(
@@ -125,6 +127,16 @@ ReconciledSpeedSample _reconcile(
           ),
     previousAcceptedSample: previousAcceptedSample,
     enforceAccelerationLimit: true,
+  );
+}
+
+ValidPositionSample _positionSample(AcceptedSpeedSample sample) {
+  return ValidPositionSample(
+    latitude: 0,
+    longitude: 0,
+    timestamp: sample.timestamp,
+    horizontalAccuracy: sample.horizontalAccuracy,
+    receivedAt: sample.timestamp,
   );
 }
 

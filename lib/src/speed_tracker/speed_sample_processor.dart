@@ -48,6 +48,7 @@ class SpeedSampleProcessor {
     final candidateValidation = _resolveCandidateValidation(
       position: position,
       positionSample: positionSample,
+      hasUnknownSpeedAccuracy: hasUnknownSpeedAccuracy,
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: !_isStartupWarmup,
     );
@@ -71,6 +72,7 @@ class SpeedSampleProcessor {
         : null;
     final reconciledSample = _platformPositionReconciler.reconcile(
       candidate: candidate,
+      positionSample: positionSample,
       positionEstimate: positionEstimate,
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: !_isStartupWarmup,
@@ -105,15 +107,11 @@ class SpeedSampleProcessor {
   SpeedSampleValidation? _resolveCandidateValidation({
     required Position position,
     required ValidPositionSample positionSample,
+    required bool hasUnknownSpeedAccuracy,
     required AcceptedSpeedSample? previousAcceptedSample,
     required bool enforceAccelerationLimit,
   }) {
-    final speedAccuracy = _speedSampleValidator.normalizeSpeedAccuracy(position.speedAccuracy);
-    if (!speedAccuracy.isKnown) {
-      if (!positionSample.hasKnownHorizontalAccuracy) {
-        return null;
-      }
-
+    if (hasUnknownSpeedAccuracy) {
       return _createFallbackCandidateValidation(
         currentSample: positionSample,
         previousAcceptedSample: previousAcceptedSample,
@@ -121,17 +119,12 @@ class SpeedSampleProcessor {
       );
     }
 
-    return _speedSampleValidator.validateAcceptedSample(
+    return _speedSampleValidator.validatePlatformSample(
       speed: position.speed,
-      timestamp: positionSample.timestamp,
-      horizontalAccuracy: positionSample.horizontalAccuracy,
-      speedAccuracy: speedAccuracy,
+      speedAccuracy: position.speedAccuracy,
+      positionSample: positionSample,
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: enforceAccelerationLimit,
-      allowUnknownHorizontalAccuracy: true,
-      allowUnknownSpeedAccuracy: false,
-      source: SpeedSampleSource.platform,
-      now: positionSample.receivedAt,
     );
   }
 
@@ -145,16 +138,12 @@ class SpeedSampleProcessor {
       return null;
     }
 
-    return _speedSampleValidator.validateAcceptedSample(
+    return _speedSampleValidator.validatePositionDeltaSample(
       speed: estimate.speed,
-      timestamp: currentSample.timestamp,
-      horizontalAccuracy: currentSample.horizontalAccuracy,
       speedAccuracy: estimate.speedAccuracy,
+      positionSample: currentSample,
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: enforceAccelerationLimit,
-      allowUnknownHorizontalAccuracy: false,
-      allowUnknownSpeedAccuracy: true,
-      source: SpeedSampleSource.positionDelta,
     );
   }
 

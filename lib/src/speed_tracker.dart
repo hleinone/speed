@@ -256,24 +256,4 @@ class SpeedTracker implements SpeedTrackingSource {
   static SpeedAccuracyEstimate normalizeSpeedAccuracy(double speedAccuracy) {
     return const SpeedSampleValidator().normalizeSpeedAccuracy(speedAccuracy);
   }
-
-  static SpeedSampleValidation validateSpeedSample({
-    required double speed,
-    required DateTime timestamp,
-    required double horizontalAccuracy,
-    required double speedAccuracy,
-    required DateTime now,
-    AcceptedSpeedSample? previousAcceptedSample,
-    bool enforceAccelerationLimit = true,
-  }) {
-    return const SpeedSampleValidator().validate(
-      speed: speed,
-      timestamp: timestamp,
-      horizontalAccuracy: horizontalAccuracy,
-      speedAccuracy: speedAccuracy,
-      now: now,
-      previousAcceptedSample: previousAcceptedSample,
-      enforceAccelerationLimit: enforceAccelerationLimit,
-    );
-  }
 }

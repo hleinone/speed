@@ -32,14 +32,42 @@ void main() {
       });
     }
   });
+
+  group('PositionSampleValidator freshness and accuracy', () {
+    test('rejects stale and far-future timestamps', () {
+      final staleSample = validator.validate(_position(timestamp: now.subtract(const Duration(seconds: 6))), now);
+      final futureSample = validator.validate(_position(timestamp: now.add(const Duration(seconds: 2))), now);
+
+      expect(staleSample, isNull);
+      expect(futureSample, isNull);
+    });
+
+    test('accepts known and explicitly unknown horizontal accuracy', () {
+      final knownSample = validator.validate(_position(timestamp: now, accuracy: 5), now);
+      final unknownSample = validator.validate(_position(timestamp: now, accuracy: 0), now);
+
+      expect(knownSample, isNotNull);
+      expect(knownSample!.hasKnownHorizontalAccuracy, isTrue);
+      expect(unknownSample, isNotNull);
+      expect(unknownSample!.hasKnownHorizontalAccuracy, isFalse);
+    });
+
+    test('rejects invalid horizontal accuracy', () {
+      const invalidAccuracies = [-1.0, double.nan, double.infinity, double.negativeInfinity, 50.1];
+
+      for (final accuracy in invalidAccuracies) {
+        expect(validator.validate(_position(timestamp: now, accuracy: accuracy), now), isNull);
+      }
+    });
+  });
 }
 
-Position _position({required double longitude, required DateTime timestamp}) {
+Position _position({double longitude = 0, required DateTime timestamp, double accuracy = 5}) {
   return Position(
     longitude: longitude,
     latitude: 0,
     timestamp: timestamp,
-    accuracy: 5,
+    accuracy: accuracy,
     altitude: 0,
     altitudeAccuracy: 0,
     heading: 0,

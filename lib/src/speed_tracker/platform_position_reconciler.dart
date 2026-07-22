@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:speed/src/speed_tracker/models.dart';
 import 'package:speed/src/speed_tracker/position_delta_speed_estimator.dart';
+import 'package:speed/src/speed_tracker/position_sample_validator.dart';
 import 'package:speed/src/speed_tracker/speed_sample_validator.dart';
 
 const double _consistencySigmaFactor = 2.0;
@@ -23,6 +24,7 @@ final class PlatformPositionReconciler {
 
   ReconciledSpeedSample reconcile({
     required AcceptedSpeedSample candidate,
+    required ValidPositionSample positionSample,
     required FallbackSpeedEstimate? positionEstimate,
     required AcceptedSpeedSample? previousAcceptedSample,
     required bool enforceAccelerationLimit,
@@ -44,16 +46,12 @@ final class PlatformPositionReconciler {
       return ReconciledSpeedSample(sample: penalizedPlatformSample);
     }
 
-    final fallbackValidation = _speedSampleValidator.validateAcceptedSample(
+    final fallbackValidation = _speedSampleValidator.validatePositionDeltaSample(
       speed: positionEstimate.speed,
-      timestamp: candidate.timestamp,
-      horizontalAccuracy: candidate.horizontalAccuracy,
       speedAccuracy: positionEstimate.speedAccuracy,
+      positionSample: positionSample,
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: enforceAccelerationLimit,
-      allowUnknownHorizontalAccuracy: false,
-      allowUnknownSpeedAccuracy: true,
-      source: SpeedSampleSource.positionDelta,
     );
     return switch (fallbackValidation) {
       SpeedSampleAccepted(:final sample) => ReconciledSpeedSample(sample: sample, resetFilter: true),
