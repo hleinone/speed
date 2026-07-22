@@ -958,6 +958,48 @@ void main() {
   group('SpeedTracker.stream freshness watchdog', () {
     final now = DateTime.utc(2026, 1, 1, 12);
 
+    test('emits unavailable when the position stream completes before a usable sample', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      await harness.closePositionStream();
+      await pumpEventQueue();
+
+      expect(harness.emissions, [isA<UnavailableSpeed>()]);
+    });
+
+    test('emits unavailable immediately when the position stream completes after a current speed', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness.addPosition(_position(speed: 10, timestamp: now));
+      await pumpEventQueue();
+      await harness.closePositionStream();
+      await pumpEventQueue();
+
+      expect(harness.emissions, [isA<CurrentSpeed>(), isA<UnavailableSpeed>()]);
+    });
+
+    test('does not duplicate unavailable when the position stream completes after the freshness timeout', () {
+      fakeAsync((async) {
+        final harness = _SpeedTrackerStreamHarness(now: now, clock: async.getClock(now).now);
+
+        harness.startListening();
+        async.flushMicrotasks();
+        async.elapse(SpeedTracker.freshnessTimeout);
+        async.flushMicrotasks();
+        unawaited(harness.closePositionStream());
+        async.flushMicrotasks();
+
+        expect(harness.emissions, [isA<UnavailableSpeed>()]);
+
+        unawaited(harness.dispose());
+        async.flushMicrotasks();
+      });
+    });
+
     test('emits unavailable when the first usable sample does not arrive in time', () {
       fakeAsync((async) {
         final harness = _SpeedTrackerStreamHarness(now: now, clock: async.getClock(now).now);
@@ -1256,9 +1298,13 @@ class _SpeedTrackerStreamHarness {
     _positionController.add(position);
   }
 
+  Future<void> closePositionStream() => _positionController.close();
+
   Future<void> dispose() async {
     await _subscription?.cancel();
-    await _positionController.close();
+    if (!_positionController.isClosed) {
+      await _positionController.close();
+    }
   }
 }
 

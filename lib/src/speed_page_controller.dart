@@ -177,7 +177,7 @@ class SpeedPageController extends ChangeNotifier {
   void _handleTrackingDone(int generation) {
     if (_isDisposed || generation != _trackingGeneration) return;
     _speedSubscription = null;
-    if (_state is SpeedPageAcquiring) {
+    if (_state is SpeedPageAcquiring || _state is SpeedPageCurrent) {
       _setState(const SpeedPageUnavailable());
     }
   }

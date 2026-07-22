@@ -129,7 +129,7 @@ void main() {
           cause: StateError('private platform message'),
         ),
       ),
-      Stream.value(const CurrentSpeed(10, 0.75)),
+      _activeSpeedStream(const CurrentSpeed(10, 0.75)),
     ]);
     await tester.pumpWidget(_speedPage(source));
     await tester.pump();
@@ -166,7 +166,7 @@ void main() {
   testWidgets('SpeedPage opens location settings and retries when the app resumes', (tester) async {
     final source = _FakeTrackingSource([
       Stream<Speed>.error(const SpeedTrackingException(SpeedTrackingFailureKind.locationServicesDisabled)),
-      Stream.value(const CurrentSpeed(8, 0.8)),
+      _activeSpeedStream(const CurrentSpeed(8, 0.8)),
     ]);
     await tester.pumpWidget(_speedPage(source));
     await tester.pump();
@@ -220,6 +220,24 @@ void main() {
     await speedStream.close();
   });
 
+  testWidgets('SpeedPage replaces a current speed when tracking completes', (tester) async {
+    final speedStream = StreamController<Speed>();
+    await tester.pumpWidget(_speedPage(_FakeTrackingSource([speedStream.stream])));
+    await tester.pump();
+
+    speedStream.add(const CurrentSpeed(12, 0.8));
+    await tester.pump();
+    expect(find.text('12'), findsOneWidget);
+    expect(find.byType(SignalStrength), findsOneWidget);
+
+    await speedStream.close();
+    await tester.pump();
+
+    expect(find.text('Speed unavailable'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Try again'), findsOneWidget);
+    expect(find.byType(SignalStrength), findsNothing);
+  });
+
   testWidgets('SpeedPage renders an injected speed with Finnish formatting', (tester) async {
     final screenAwake = _FakeScreenAwake();
 
@@ -233,7 +251,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: screenAwake,
-              trackingSource: _FakeTrackingSource([Stream.value(const CurrentSpeed(42 / 2.236936, 0.68))]),
+              trackingSource: _FakeTrackingSource([_activeSpeedStream(const CurrentSpeed(42 / 2.236936, 0.68))]),
               initialSpeedUnit: SpeedUnit.milesPerHour,
             ),
           ),
@@ -258,7 +276,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: _FakeScreenAwake(),
-              trackingSource: _FakeTrackingSource([Stream.value(const CurrentSpeed(42 / 2.236936, 0.68))]),
+              trackingSource: _FakeTrackingSource([_activeSpeedStream(const CurrentSpeed(42 / 2.236936, 0.68))]),
               initialSpeedUnit: SpeedUnit.milesPerHour,
             ),
           ),
@@ -283,7 +301,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: _FakeScreenAwake(),
-              trackingSource: _FakeTrackingSource([Stream.value(const CurrentSpeed(1, 0.8))]),
+              trackingSource: _FakeTrackingSource([_activeSpeedStream(const CurrentSpeed(1, 0.8))]),
               initialSpeedUnit: SpeedUnit.milesPerHour,
             ),
           ),
@@ -307,7 +325,7 @@ void main() {
             data: MediaQuery.of(context).copyWith(disableAnimations: true),
             child: SpeedPage(
               screenAwake: _FakeScreenAwake(),
-              trackingSource: _FakeTrackingSource([Stream.value(const CurrentSpeed(15, 0.88))]),
+              trackingSource: _FakeTrackingSource([_activeSpeedStream(const CurrentSpeed(15, 0.88))]),
               initialSpeedUnit: SpeedUnit.metersPerSecond,
             ),
           ),
@@ -325,6 +343,10 @@ void main() {
     expect(find.text('fps'), findsWidgets);
     expect(find.text('knots'), findsWidgets);
   });
+}
+
+Stream<Speed> _activeSpeedStream(Speed speed) {
+  return Stream.multi((controller) => controller.add(speed));
 }
 
 Widget _speedPage(_FakeTrackingSource source, {Locale locale = const Locale('en')}) {

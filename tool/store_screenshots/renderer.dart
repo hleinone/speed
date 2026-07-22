@@ -316,7 +316,7 @@ class _StaticSpeedTrackingSource implements SpeedTrackingSource {
   final Speed speed;
 
   @override
-  Stream<Speed> get stream => Stream.value(speed);
+  Stream<Speed> get stream => Stream.multi((controller) => controller.add(speed));
 
   @override
   Future<bool> openAppSettings() async => false;

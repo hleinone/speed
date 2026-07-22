@@ -153,9 +153,7 @@ class SpeedTracker implements SpeedTrackingSource {
               },
               onDone: () {
                 freshnessTimer?.cancel();
-                if (lastEmittedSpeed == null) {
-                  emitUnavailable();
-                }
+                emitUnavailable();
                 unawaited(controller.close());
               },
             );
