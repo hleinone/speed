@@ -79,7 +79,7 @@ class SpeedTracker implements SpeedTrackingSource {
        _platform = platform ?? defaultTargetPlatform;
 
   @override
-  Stream<Speed> get stream async* {
+  Stream<Speed> track() async* {
     late final StreamController<Speed> controller;
     // Cancellation is centralized in cancelPositionStream(); the lint does not follow local function calls.
     // ignore: cancel_subscriptions

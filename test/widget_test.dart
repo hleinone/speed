@@ -172,7 +172,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('10'), findsOneWidget);
-    expect(source.streamCalls, 2);
+    expect(source.trackCalls, 2);
   });
 
   testWidgets('SpeedPage explains retryable permission denial', (tester) async {
@@ -202,7 +202,7 @@ void main() {
     await tester.tap(find.text('Open location settings'));
     await tester.pump();
     expect(source.openLocationSettingsCalls, 1);
-    expect(source.streamCalls, 1);
+    expect(source.trackCalls, 1);
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -210,7 +210,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('8'), findsOneWidget);
-    expect(source.streamCalls, 2);
+    expect(source.trackCalls, 2);
   });
 
   testWidgets('SpeedPage shows a localized snackbar when settings cannot open', (tester) async {
@@ -434,13 +434,13 @@ class _FakeTrackingSource implements SpeedTrackingSource {
 
   final List<Stream<Speed>> streams;
   final bool appSettingsOpened;
-  int streamCalls = 0;
+  int trackCalls = 0;
   int openAppSettingsCalls = 0;
   int openLocationSettingsCalls = 0;
 
   @override
-  Stream<Speed> get stream {
-    final index = streamCalls++;
+  Stream<Speed> track() {
+    final index = trackCalls++;
     return streams[index];
   }
 

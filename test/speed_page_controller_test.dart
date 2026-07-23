@@ -120,7 +120,7 @@ void main() {
       await controller.retry();
       await firstCanceled.future;
       expect(controller.state, isA<SpeedPageAcquiring>());
-      expect(source.streamCalls, 2);
+      expect(source.trackCalls, 2);
 
       second.add(const CurrentSpeed(10, 0.9));
       first.add(const CurrentSpeed(99, 1));
@@ -157,16 +157,16 @@ void main() {
       await pumpEventQueue();
 
       expect(await controller.openAppSettings(), isTrue);
-      expect(source.streamCalls, 1);
+      expect(source.trackCalls, 1);
       controller.onAppResumed();
       await pumpEventQueue();
 
-      expect(source.streamCalls, 2);
+      expect(source.trackCalls, 2);
       expect(controller.state, isA<SpeedPageUnavailable>());
 
       controller.onAppResumed();
       await pumpEventQueue();
-      expect(source.streamCalls, 2);
+      expect(source.trackCalls, 2);
     });
 
     test('does not retry on ordinary resume or after settings failed to open', () async {
@@ -181,7 +181,7 @@ void main() {
       controller.onAppResumed();
       await pumpEventQueue();
 
-      expect(source.streamCalls, 1);
+      expect(source.trackCalls, 1);
     });
 
     test('opens location settings through the tracking source', () async {
@@ -204,7 +204,7 @@ void main() {
       controller.onAppResumed();
       await pumpEventQueue();
 
-      expect(source.streamCalls, 0);
+      expect(source.trackCalls, 0);
     });
   });
 
@@ -313,12 +313,12 @@ class _FakeTrackingSource implements SpeedTrackingSource {
   final bool appSettingsOpened;
   final bool locationSettingsOpened;
   final Exception? appSettingsError;
-  int streamCalls = 0;
+  int trackCalls = 0;
   int openLocationSettingsCalls = 0;
 
   @override
-  Stream<Speed> get stream {
-    final index = streamCalls++;
+  Stream<Speed> track() {
+    final index = trackCalls++;
     return streams[index];
   }
 

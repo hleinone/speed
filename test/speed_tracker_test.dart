@@ -85,7 +85,7 @@ void main() {
     test('granted permission starts position tracking', () async {
       final geolocation = _FakeGeolocationGateway();
 
-      final speed = await SpeedTracker(geolocation: geolocation).stream.first;
+      final speed = await SpeedTracker(geolocation: geolocation).track().first;
 
       expect(speed, isA<UnavailableSpeed>());
       expect(geolocation.positionStreamCalls, 1);
@@ -110,7 +110,7 @@ void main() {
         temporaryAccuracy: LocationAccuracyStatus.precise,
       );
 
-      final speed = await SpeedTracker(geolocation: geolocation, platform: TargetPlatform.iOS).stream.first;
+      final speed = await SpeedTracker(geolocation: geolocation, platform: TargetPlatform.iOS).track().first;
 
       expect(speed, isA<UnavailableSpeed>());
       expect(geolocation.positionStreamCalls, 1);
@@ -128,7 +128,7 @@ void main() {
     test('unknown Android accuracy does not block tracking', () async {
       final geolocation = _FakeGeolocationGateway(accuracy: LocationAccuracyStatus.unknown);
 
-      final speed = await SpeedTracker(geolocation: geolocation, platform: TargetPlatform.android).stream.first;
+      final speed = await SpeedTracker(geolocation: geolocation, platform: TargetPlatform.android).track().first;
 
       expect(speed, isA<UnavailableSpeed>());
       expect(geolocation.positionStreamCalls, 1);
@@ -239,7 +239,7 @@ void main() {
       final stackTraces = <StackTrace>[];
       final done = Completer<void>();
       final tracker = SpeedTracker(geolocation: _FakeGeolocationGateway(positionStreamProvider: (_) => throw cause));
-      final subscription = tracker.stream.listen(
+      final subscription = tracker.track().listen(
         (_) => fail('Expected no speed values'),
         onError: (Object error, StackTrace stackTrace) {
           errors.add(error);
@@ -292,7 +292,7 @@ void main() {
     });
   });
 
-  group('SpeedTracker.stream position-delta fallback', () {
+  group('SpeedTracker.track position-delta fallback', () {
     final now = DateTime.utc(2026, 1, 1, 12);
 
     test('stores the first ambiguous zero sample without emitting speed', () async {
@@ -803,7 +803,7 @@ void main() {
     });
   });
 
-  group('SpeedTracker.stream platform-position consistency', () {
+  group('SpeedTracker.track platform-position consistency', () {
     final now = DateTime.utc(2026, 1, 1, 12);
 
     test('keeps platform confidence when platform speed agrees with position regression', () async {
@@ -897,7 +897,7 @@ void main() {
     });
   });
 
-  group('SpeedTracker.stream freshness watchdog', () {
+  group('SpeedTracker.track freshness watchdog', () {
     final now = DateTime.utc(2026, 1, 1, 12);
 
     test('emits unavailable when the position stream completes before a usable sample', () async {
@@ -1273,7 +1273,7 @@ class _SpeedTrackerStreamHarness {
   }
 
   void startListening() {
-    _subscription = _speedTracker.stream.listen(
+    _subscription = _speedTracker.track().listen(
       (speed) {
         emissions.add(speed);
         if (speed case CurrentSpeed()) {
@@ -1312,7 +1312,7 @@ class _SpeedTrackerStreamHarness {
 
 Future<Object> _firstStreamError(SpeedTracker tracker) async {
   try {
-    await tracker.stream.first;
+    await tracker.track().first;
     fail('Expected the speed stream to fail');
   } catch (error) {
     return error;

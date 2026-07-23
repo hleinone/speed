@@ -94,7 +94,7 @@ class SpeedPageController extends ChangeNotifier {
     if (_isDisposed || generation != _trackingGeneration) return;
 
     try {
-      final subscription = _trackingSource.stream.listen(
+      final subscription = _trackingSource.track().listen(
         (speed) => _handleSpeed(speed, generation),
         onError: (Object error, StackTrace stackTrace) => _handleTrackingError(error, stackTrace, generation),
         onDone: () => _handleTrackingDone(generation),

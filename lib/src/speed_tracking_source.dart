@@ -1,7 +1,8 @@
 import 'package:speed/src/speed_tracker/models.dart';
 
 abstract interface class SpeedTrackingSource {
-  Stream<Speed> get stream;
+  /// Creates a fresh speed-tracking stream that starts work when listened to.
+  Stream<Speed> track();
 
   Future<bool> openAppSettings();
 
