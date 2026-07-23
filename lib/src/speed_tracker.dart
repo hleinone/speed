@@ -85,7 +85,7 @@ class SpeedTracker implements SpeedTrackingSource {
     // ignore: cancel_subscriptions
     StreamSubscription<Position>? positionStreamSubscription;
     Timer? freshnessTimer;
-    Speed? lastEmittedSpeed;
+    var lastEmitWasUnavailable = false;
     var hasTerminated = false;
 
     final locationSettings = createLocationSettings(_platform);
@@ -125,13 +125,13 @@ class SpeedTracker implements SpeedTrackingSource {
     }
 
     void emitUnavailable() {
-      if (hasTerminated || controller.isClosed || lastEmittedSpeed is UnavailableSpeed) {
+      if (hasTerminated || controller.isClosed || lastEmitWasUnavailable) {
         return;
       }
 
       const unavailableSpeed = UnavailableSpeed();
       controller.add(unavailableSpeed);
-      lastEmittedSpeed = unavailableSpeed;
+      lastEmitWasUnavailable = true;
     }
 
     void scheduleFreshnessWatchdog(AcceptedSpeedSample sample, DateTime now) {
@@ -148,7 +148,7 @@ class SpeedTracker implements SpeedTrackingSource {
 
       scheduleFreshnessWatchdog(sample, now);
       controller.add(speed);
-      lastEmittedSpeed = speed;
+      lastEmitWasUnavailable = false;
     }
 
     void finish() {

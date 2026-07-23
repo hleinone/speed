@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:speed/src/speed_tracker/models.dart';
 import 'package:speed/src/speed_tracker/speed_sample_validator.dart';
+import 'package:speed/src/util/duration_extensions.dart';
 
 const double _fallbackMinTolerance = 1.0;
 const double _fallbackSpeedFactor = 0.35;
@@ -41,9 +42,7 @@ final class SampleConfirmationGate {
       return true;
     }
 
-    final elapsedSeconds =
-        candidate.timestamp.difference(previousAcceptedSample.timestamp).inMicroseconds /
-        Duration.microsecondsPerSecond;
+    final elapsedSeconds = candidate.timestamp.difference(previousAcceptedSample.timestamp).inFractionalSeconds;
     if (elapsedSeconds <= 0 ||
         _speedSampleValidator.hasPlausibleSpeedChange(
           previousSample: previousAcceptedSample,

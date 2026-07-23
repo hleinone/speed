@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:speed/src/speed_tracker/models.dart';
 import 'package:speed/src/speed_tracker/position_sample_validator.dart';
 import 'package:speed/src/speed_tracker/speed_tracker_constants.dart' as config;
+import 'package:speed/src/util/duration_extensions.dart';
 
 const double _stationarySpeedEpsilon = 0.2;
 const double _rmsResidualFloor = 1.5;
@@ -59,14 +60,18 @@ class PositionDeltaSpeedEstimator {
       return null;
     }
 
-    final origin = _samples.first;
     final regressionPoints = _samples
         .map((sample) {
-          final t = sample.timestamp.difference(origin.timestamp).inMicroseconds / Duration.microsecondsPerSecond;
-          final x = _signedLongitudeDistance(origin, sample);
+          final t = sample.timestamp.difference(firstSample.timestamp).inFractionalSeconds;
+          final x = _signedLongitudeDistance(firstSample, sample);
           final y =
-              Geolocator.distanceBetween(origin.latitude, origin.longitude, sample.latitude, origin.longitude) *
-              (sample.latitude >= origin.latitude ? 1 : -1);
+              Geolocator.distanceBetween(
+                firstSample.latitude,
+                firstSample.longitude,
+                sample.latitude,
+                firstSample.longitude,
+              ) *
+              (sample.latitude >= firstSample.latitude ? 1 : -1);
           final weight = 1 / (sample.horizontalAccuracy * sample.horizontalAccuracy);
           return _FallbackRegressionPoint(t: t, x: x, y: y, weight: weight);
         })
@@ -79,11 +84,14 @@ class PositionDeltaSpeedEstimator {
 
     final medianHorizontalAccuracy = _medianHorizontalAccuracy(_samples);
     final fittedSpeed = sqrt((regression.xSlope * regression.xSlope) + (regression.ySlope * regression.ySlope));
-    final elapsedSeconds = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
-    if (fittedSpeed < _stationarySpeedEpsilon) {
+    final elapsedSeconds = elapsed.inFractionalSeconds;
+    final isStationary = fittedSpeed < _stationarySpeedEpsilon;
+    late final double speed;
+    if (isStationary) {
       if (!_isStationaryCluster(regressionPoints, medianHorizontalAccuracy)) {
         return null;
       }
+      speed = 0;
     } else {
       if (!_hasAcceptableFit(regression, medianHorizontalAccuracy, fittedSpeed * elapsedSeconds)) {
         return null;
@@ -91,9 +99,9 @@ class PositionDeltaSpeedEstimator {
       if (!_hasConsistentSegments(regressionPoints, regression, fittedSpeed)) {
         return null;
       }
+      speed = fittedSpeed;
     }
 
-    final speed = fittedSpeed < _stationarySpeedEpsilon ? 0.0 : fittedSpeed;
     final speedAccuracy = SpeedAccuracyEstimate(
       standardDeviation: max(
         config.fallbackSpeedAccuracy,

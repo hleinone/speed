@@ -1,6 +1,18 @@
 import 'package:flutter/material.dart';
 
-const List<double?> _barThresholds = [null, 0.5, 0.75, 0.9];
+typedef _SignalLevel = ({double? threshold, Color color});
+
+const List<_SignalLevel> _signalLevels = [
+  (threshold: null, color: Colors.red),
+  (threshold: 0.5, color: Colors.amber),
+  (threshold: 0.75, color: Colors.lightGreen),
+  (threshold: 0.9, color: Colors.green),
+];
+
+bool _isActiveSignalLevel(_SignalLevel level, double value) {
+  final threshold = level.threshold;
+  return threshold == null || value >= threshold;
+}
 
 class SignalStrength extends StatelessWidget {
   /// Signal quality value, between 0.0 (worst) and 1.0 (best).
@@ -10,26 +22,16 @@ class SignalStrength extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color;
-    if (value >= 0.9) {
-      color = Colors.green;
-    } else if (value >= 0.75) {
-      color = Colors.lightGreen;
-    } else if (value >= 0.5) {
-      color = Colors.amber;
-    } else {
-      color = Colors.red;
-    }
+    final color = _signalLevels.lastWhere((level) => _isActiveSignalLevel(level, value)).color;
     final inactiveColor = Theme.of(context).colorScheme.surfaceContainer;
     return Row(
       mainAxisSize: MainAxisSize.max,
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       spacing: 4,
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: _barThresholds
+      children: _signalLevels
           .map(
-            (threshold) =>
-                Expanded(child: ColoredBox(color: threshold == null || value >= threshold ? color : inactiveColor)),
+            (level) => Expanded(child: ColoredBox(color: _isActiveSignalLevel(level, value) ? color : inactiveColor)),
           )
           .toList(growable: false),
     );

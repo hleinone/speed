@@ -42,12 +42,5 @@ class SharedPreferencesSpeedUnitStore implements SpeedUnitStore {
     await preferences.setString(_preferenceKey, unit.name);
   }
 
-  SpeedUnit _unitFromName(String name) {
-    for (final unit in SpeedUnit.values) {
-      if (unit.name == name) {
-        return unit;
-      }
-    }
-    return _defaultUnit;
-  }
+  SpeedUnit _unitFromName(String name) => SpeedUnit.values.asNameMap()[name] ?? _defaultUnit;
 }

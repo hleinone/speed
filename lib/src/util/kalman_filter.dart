@@ -1,3 +1,5 @@
+import 'package:speed/src/util/duration_extensions.dart';
+
 class KalmanFilter {
   double _estimate;
   double _errorCovariance;
@@ -9,9 +11,8 @@ class KalmanFilter {
 
   double update(double measurement, double measurementNoise, {Duration elapsedTime = const Duration(seconds: 1)}) {
     // Prediction update
-    final elapsedMicroseconds = elapsedTime.inMicroseconds;
-    final elapsedSeconds = elapsedMicroseconds <= 0 ? 0.0 : elapsedMicroseconds / Duration.microsecondsPerSecond;
-    _errorCovariance += processNoise * elapsedSeconds;
+    final elapsedSeconds = elapsedTime.inFractionalSeconds;
+    _errorCovariance += processNoise * (elapsedSeconds <= 0 ? 0.0 : elapsedSeconds);
 
     // Measurement update
     final kalmanGain = _errorCovariance / (_errorCovariance + measurementNoise);

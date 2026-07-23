@@ -936,6 +936,27 @@ void main() {
       });
     });
 
+    test('emits unavailable again after recovering with a current speed', () {
+      fakeAsync((async) {
+        final harness = _SpeedTrackerStreamHarness(now: now, clock: async.getClock(now).now);
+
+        harness.startListening();
+        async.flushMicrotasks();
+        async.elapse(config.freshnessTimeout);
+        async.flushMicrotasks();
+
+        harness.addPosition(_position(speed: 10, timestamp: now.add(config.freshnessTimeout)));
+        async.flushMicrotasks();
+        unawaited(harness.closePositionStream());
+        async.flushMicrotasks();
+
+        expect(harness.emissions, [isA<UnavailableSpeed>(), isA<CurrentSpeed>(), isA<UnavailableSpeed>()]);
+
+        unawaited(harness.dispose());
+        async.flushMicrotasks();
+      });
+    });
+
     test('emits unavailable when the first usable sample does not arrive in time', () {
       fakeAsync((async) {
         final harness = _SpeedTrackerStreamHarness(now: now, clock: async.getClock(now).now);

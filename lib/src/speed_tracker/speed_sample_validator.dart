@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:speed/src/speed_tracker/models.dart';
 import 'package:speed/src/speed_tracker/position_sample_validator.dart';
 import 'package:speed/src/speed_tracker/speed_tracker_constants.dart' as config;
+import 'package:speed/src/util/duration_extensions.dart';
 
 class SpeedSampleValidator {
   const SpeedSampleValidator();
@@ -103,8 +104,7 @@ class SpeedSampleValidator {
       return SpeedSampleValidation.accepted(acceptedSample);
     }
 
-    final elapsedSeconds =
-        positionSample.timestamp.difference(previousSample.timestamp).inMicroseconds / Duration.microsecondsPerSecond;
+    final elapsedSeconds = positionSample.timestamp.difference(previousSample.timestamp).inFractionalSeconds;
     if (elapsedSeconds <= 0) {
       return const SpeedSampleValidation.rejected(SpeedSampleRejectionReason.nonIncreasingTimestamp);
     }
