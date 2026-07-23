@@ -3,7 +3,7 @@
   "kilometersPerHour": "km/h",
   "milesPerHour": "mi/h",
   "metersPerSecond": "m/s",
-  "footPerSecond": "ft/s",
+  "feetPerSecond": "ft/s",
   "knots": "solmua",
   "acquiringSpeedTitle": "Haetaan nopeutta",
   "acquiringSpeedMessage": "Odotetaan GPS-signaalia…",

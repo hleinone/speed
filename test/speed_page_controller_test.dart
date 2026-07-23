@@ -267,11 +267,11 @@ void main() {
       addTearDown(controller.dispose);
       controller.start();
 
-      controller.selectSpeedUnit(SpeedUnit.footPerSecond);
+      controller.selectSpeedUnit(SpeedUnit.feetPerSecond);
       loadCompleter.complete(SpeedUnit.knots);
       await pumpEventQueue();
 
-      expect(controller.speedUnit, SpeedUnit.footPerSecond);
+      expect(controller.speedUnit, SpeedUnit.feetPerSecond);
     });
 
     test('preference failures do not become tracking failures', () async {

@@ -8,7 +8,7 @@ extension SpeedUnitLocalization on SpeedUnit {
       SpeedUnit.kilometersPerHour => L10n.of(context).kilometersPerHour,
       SpeedUnit.milesPerHour => L10n.of(context).milesPerHour,
       SpeedUnit.metersPerSecond => L10n.of(context).metersPerSecond,
-      SpeedUnit.footPerSecond => L10n.of(context).footPerSecond,
+      SpeedUnit.feetPerSecond => L10n.of(context).feetPerSecond,
       SpeedUnit.knots => L10n.of(context).knots,
     };
   }

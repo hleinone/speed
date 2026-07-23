@@ -3,7 +3,7 @@
   "kilometersPerHour": "km/h",
   "milesPerHour": "mph",
   "metersPerSecond": "m/s",
-  "footPerSecond": "fps",
+  "feetPerSecond": "fps",
   "knots": "knots",
   "acquiringSpeedTitle": "Finding your speed",
   "acquiringSpeedMessage": "Waiting for a GPS signal…",

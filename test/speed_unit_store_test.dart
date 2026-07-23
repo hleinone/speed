@@ -6,13 +6,6 @@ import 'package:speed/src/speed_unit_store.dart';
 void main() {
   const store = SharedPreferencesSpeedUnitStore();
   const preferenceKey = 'selected_speed_unit';
-  const legacyUnitsByIndex = {
-    0: SpeedUnit.kilometersPerHour,
-    1: SpeedUnit.milesPerHour,
-    2: SpeedUnit.metersPerSecond,
-    3: SpeedUnit.footPerSecond,
-    4: SpeedUnit.knots,
-  };
 
   group('SharedPreferencesSpeedUnitStore', () {
     test('defaults to meters per second when no preference exists', () async {
@@ -34,24 +27,14 @@ void main() {
     test('saves the stable unit name', () async {
       SharedPreferences.setMockInitialValues({});
 
-      await store.save(SpeedUnit.milesPerHour);
+      await store.save(SpeedUnit.feetPerSecond);
 
       final preferences = await SharedPreferences.getInstance();
-      expect(preferences.get(preferenceKey), SpeedUnit.milesPerHour.name);
+      expect(preferences.get(preferenceKey), 'feetPerSecond');
     });
 
-    test('migrates every valid legacy index to its stable unit name', () async {
-      for (final entry in legacyUnitsByIndex.entries) {
-        SharedPreferences.setMockInitialValues({preferenceKey: entry.key});
-
-        expect(await store.load(), entry.value, reason: 'legacy index ${entry.key}');
-        final preferences = await SharedPreferences.getInstance();
-        expect(preferences.get(preferenceKey), entry.value.name);
-      }
-    });
-
-    test('defaults without rewriting invalid legacy indexes', () async {
-      for (final index in [-1, 5, 999]) {
+    test('defaults without rewriting integer values', () async {
+      for (final index in [-1, 0, 1, 2, 3, 4, 5, 999]) {
         SharedPreferences.setMockInitialValues({preferenceKey: index});
 
         expect(await store.load(), SpeedUnit.metersPerSecond);
@@ -61,7 +44,7 @@ void main() {
     });
 
     test('defaults without rewriting unknown unit names', () async {
-      for (final name in ['', 'unknown']) {
+      for (final name in ['', 'unknown', 'footPerSecond']) {
         SharedPreferences.setMockInitialValues({preferenceKey: name});
 
         expect(await store.load(), SpeedUnit.metersPerSecond);

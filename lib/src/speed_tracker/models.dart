@@ -92,7 +92,7 @@ enum SpeedUnit {
   kilometersPerHour(3.600000),
   milesPerHour(2.236936),
   metersPerSecond(1),
-  footPerSecond(3.280840),
+  feetPerSecond(3.280840),
   knots(1.943844);
 
   final double _factor;
