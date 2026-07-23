@@ -15,6 +15,12 @@ class ProcessedSpeedSample {
   const ProcessedSpeedSample({required this.speed, required this.acceptedSample});
 }
 
+/// Processes each position through a fixed pipeline:
+/// 1. Validate and record the position.
+/// 2. Select and validate platform or position-delta speed.
+/// 3. Reconcile platform speed with the position estimate.
+/// 4. Apply confirmation gating.
+/// 5. Commit accepted state and filter the emitted speed.
 class SpeedSampleProcessor {
   final double processNoise;
   final PositionSampleValidator _positionSampleValidator = const PositionSampleValidator();
@@ -35,13 +41,13 @@ class SpeedSampleProcessor {
       return null;
     }
 
-    final hasUnknownSpeedAccuracy = _speedSampleValidator.hasUnknownSpeedAccuracy(position.speedAccuracy);
+    final isFallbackSample = _speedSampleValidator.hasUnknownSpeedAccuracy(position.speedAccuracy);
     final addedToFallbackWindow = _positionDeltaSpeedEstimator.addSample(positionSample);
-    if (hasUnknownSpeedAccuracy && !positionSample.hasKnownHorizontalAccuracy) {
+    if (isFallbackSample && !positionSample.hasKnownHorizontalAccuracy) {
       _sampleConfirmationGate.reset();
       return null;
     }
-    if (!addedToFallbackWindow && hasUnknownSpeedAccuracy) {
+    if (!addedToFallbackWindow && isFallbackSample) {
       return null;
     }
 
@@ -49,7 +55,7 @@ class SpeedSampleProcessor {
     final candidateValidation = _resolveCandidateValidation(
       position: position,
       positionSample: positionSample,
-      hasUnknownSpeedAccuracy: hasUnknownSpeedAccuracy,
+      isFallbackSample: isFallbackSample,
       previousAcceptedSample: previousAcceptedSample,
       enforceAccelerationLimit: !isStartupWarmup,
     );
@@ -64,7 +70,11 @@ class SpeedSampleProcessor {
         candidate = sample;
       case SpeedSampleRejected(:final reason):
         _sampleConfirmationGate.reset();
-        _removeRejectedFallbackOutlier(position, reason, addedToFallbackWindow);
+        _removeRejectedFallbackOutlier(
+          reason: reason,
+          isFallbackSample: isFallbackSample,
+          addedToFallbackWindow: addedToFallbackWindow,
+        );
         return null;
     }
 
@@ -109,11 +119,11 @@ class SpeedSampleProcessor {
   SpeedSampleValidation? _resolveCandidateValidation({
     required Position position,
     required ValidPositionSample positionSample,
-    required bool hasUnknownSpeedAccuracy,
+    required bool isFallbackSample,
     required AcceptedSpeedSample? previousAcceptedSample,
     required bool enforceAccelerationLimit,
   }) {
-    if (hasUnknownSpeedAccuracy) {
+    if (isFallbackSample) {
       return _createFallbackCandidateValidation(
         currentSample: positionSample,
         previousAcceptedSample: previousAcceptedSample,
@@ -149,14 +159,12 @@ class SpeedSampleProcessor {
     );
   }
 
-  void _removeRejectedFallbackOutlier(
-    Position position,
-    SpeedSampleRejectionReason reason,
-    bool addedToFallbackWindow,
-  ) {
-    if (reason == SpeedSampleRejectionReason.implausibleAcceleration &&
-        addedToFallbackWindow &&
-        _speedSampleValidator.hasUnknownSpeedAccuracy(position.speedAccuracy)) {
+  void _removeRejectedFallbackOutlier({
+    required SpeedSampleRejectionReason reason,
+    required bool isFallbackSample,
+    required bool addedToFallbackWindow,
+  }) {
+    if (reason == SpeedSampleRejectionReason.implausibleAcceleration && addedToFallbackWindow && isFallbackSample) {
       _positionDeltaSpeedEstimator.removeLastSample();
     }
   }
