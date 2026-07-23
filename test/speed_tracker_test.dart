@@ -1023,6 +1023,24 @@ void main() {
       expect(harness.emittedSpeeds.map((speed) => speed.value), [10, 16]);
     });
 
+    test('emits the first three accepted samples raw and filters the fourth', () async {
+      final harness = _SpeedTrackerStreamHarness(now: now);
+      addTearDown(harness.dispose);
+
+      await harness.start();
+      harness
+        ..addPosition(_eastwardPosition(metersEast: 0, speed: 4, timestamp: now.subtract(const Duration(seconds: 3))))
+        ..addPosition(_eastwardPosition(metersEast: 6, speed: 6, timestamp: now.subtract(const Duration(seconds: 2))))
+        ..addPosition(_eastwardPosition(metersEast: 14, speed: 8, timestamp: now.subtract(const Duration(seconds: 1))))
+        ..addPosition(_eastwardPosition(metersEast: 24, speed: 10, timestamp: now));
+      await pumpEventQueue();
+
+      final emittedValues = harness.emittedSpeeds.map((speed) => speed.value).toList();
+      expect(emittedValues.take(config.startupWarmupAcceptedSamples), [4, 6, 8]);
+      expect(emittedValues, hasLength(config.startupWarmupAcceptedSamples + 1));
+      expect(emittedValues.last, allOf(greaterThan(4), lessThan(10)));
+    });
+
     test('re-enables acceleration rejection after warm-up samples', () async {
       final harness = _SpeedTrackerStreamHarness(now: now);
       addTearDown(harness.dispose);

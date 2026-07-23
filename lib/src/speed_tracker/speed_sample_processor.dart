@@ -29,6 +29,7 @@ class SpeedSampleProcessor {
   SpeedSampleProcessor({required this.processNoise});
 
   ProcessedSpeedSample? process(Position position, DateTime now) {
+    final isStartupWarmup = _isStartupWarmup;
     final positionSample = _positionSampleValidator.validate(position, now);
     if (positionSample == null) {
       return null;
@@ -50,7 +51,7 @@ class SpeedSampleProcessor {
       positionSample: positionSample,
       hasUnknownSpeedAccuracy: hasUnknownSpeedAccuracy,
       previousAcceptedSample: previousAcceptedSample,
-      enforceAccelerationLimit: !_isStartupWarmup,
+      enforceAccelerationLimit: !isStartupWarmup,
     );
     if (candidateValidation == null) {
       _sampleConfirmationGate.reset();
@@ -75,14 +76,14 @@ class SpeedSampleProcessor {
       positionSample: positionSample,
       positionEstimate: positionEstimate,
       previousAcceptedSample: previousAcceptedSample,
-      enforceAccelerationLimit: !_isStartupWarmup,
+      enforceAccelerationLimit: !isStartupWarmup,
     );
     final acceptedSample = reconciledSample.sample;
 
     if (!_sampleConfirmationGate.shouldEmit(
       candidate: acceptedSample,
       previousAcceptedSample: previousAcceptedSample,
-      isStartupWarmup: _isStartupWarmup,
+      isStartupWarmup: isStartupWarmup,
     )) {
       return null;
     }
@@ -94,6 +95,7 @@ class SpeedSampleProcessor {
       acceptedSample,
       previousAcceptedSample,
       resetFilter: reconciledSample.resetFilter,
+      isStartupWarmup: isStartupWarmup,
     );
     final accuracy = _accuracyFor(acceptedSample);
     return ProcessedSpeedSample(
@@ -163,6 +165,7 @@ class SpeedSampleProcessor {
     AcceptedSpeedSample acceptedSample,
     AcceptedSpeedSample? previousAcceptedSample, {
     bool resetFilter = false,
+    required bool isStartupWarmup,
   }) {
     if (resetFilter) {
       _kalmanFilter = _createKalmanFilter(acceptedSample);
@@ -183,7 +186,7 @@ class SpeedSampleProcessor {
       _measurementNoiseFor(acceptedSample),
       elapsedTime: elapsedTime,
     );
-    if (_acceptedStreamSampleCount <= config.startupWarmupAcceptedSamples) {
+    if (isStartupWarmup) {
       return acceptedSample.speed;
     }
     return filteredSpeed;
