@@ -126,6 +126,52 @@ void main() {
     expect(screenAwake.disableCalls, 1);
   });
 
+  testWidgets('SpeedPage keeps interactive content within system insets', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    const configurations = [(size: Size(400, 800), insets: EdgeInsets.fromLTRB(24, 48, 32, 36)), (size: Size(800, 400), insets: EdgeInsets.fromLTRB(56, 24, 48, 32))];
+
+    for (final configuration in configurations) {
+      tester.view.physicalSize = configuration.size;
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: L10n.localizationsDelegates,
+          supportedLocales: L10n.supportedLocales,
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(padding: configuration.insets, viewPadding: configuration.insets),
+              child: SpeedPage(
+                screenAwake: _FakeScreenAwake(),
+                trackingSource: _FakeTrackingSource([Stream<Speed>.error(const SpeedTrackingException(SpeedTrackingFailureKind.permissionDenied))]),
+                speedUnitStore: _FakeSpeedUnitStore(),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final appBarRect = tester.getRect(find.byType(AppBar));
+      final logoRect = tester.getRect(find.byType(SpeedLogo));
+      final unitMenuRect = tester.getRect(find.byType(DropdownMenu<SpeedUnit>));
+      final retryButtonRect = tester.getRect(find.widgetWithText(FilledButton, 'Try again'));
+      final safeRight = configuration.size.width - configuration.insets.right;
+      final safeBottom = configuration.size.height - configuration.insets.bottom;
+
+      expect(appBarRect.top, 0);
+      expect(logoRect.left, greaterThanOrEqualTo(configuration.insets.left));
+      expect(logoRect.top, greaterThanOrEqualTo(configuration.insets.top));
+      expect(unitMenuRect.right, lessThanOrEqualTo(safeRight));
+      expect(unitMenuRect.top, greaterThanOrEqualTo(configuration.insets.top));
+      expect(retryButtonRect.left, greaterThanOrEqualTo(configuration.insets.left));
+      expect(retryButtonRect.right, lessThanOrEqualTo(safeRight));
+      expect(retryButtonRect.bottom, lessThanOrEqualTo(safeBottom));
+    }
+  });
+
   testWidgets('SpeedPage presents generic errors without exposing raw details', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
