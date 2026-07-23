@@ -491,9 +491,12 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, 8);
-      expect(harness.emittedSpeeds.single.accuracy, closeTo(config.unknownSpeedConfidence * 0.9, 0.000001));
+      expect(
+        harness.emittedSpeeds.single.accuracy,
+        closeTo(config.unknownHorizontalAccuracyConfidence * 0.9, 0.000001),
+      );
       expect(harness.emittedSpeeds.single.accuracy, greaterThan(0));
-      expect(harness.emittedSpeeds.single.accuracy, lessThan(config.unknownSpeedConfidence));
+      expect(harness.emittedSpeeds.single.accuracy, lessThan(config.unknownHorizontalAccuracyConfidence));
     });
 
     test('trusts platform zero speed with unknown horizontal accuracy at low confidence', () async {
@@ -506,9 +509,12 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, 0);
-      expect(harness.emittedSpeeds.single.accuracy, closeTo(config.unknownSpeedConfidence * 0.9, 0.000001));
+      expect(
+        harness.emittedSpeeds.single.accuracy,
+        closeTo(config.unknownHorizontalAccuracyConfidence * 0.9, 0.000001),
+      );
       expect(harness.emittedSpeeds.single.accuracy, greaterThan(0));
-      expect(harness.emittedSpeeds.single.accuracy, lessThan(config.unknownSpeedConfidence));
+      expect(harness.emittedSpeeds.single.accuracy, lessThan(config.unknownHorizontalAccuracyConfidence));
     });
 
     test('emits a platform first sample immediately', () async {

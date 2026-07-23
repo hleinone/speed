@@ -43,7 +43,7 @@ class PositionSampleValidator {
 
   static double horizontalAccuracyConfidence(double horizontalAccuracy) {
     if (isUnknownHorizontalAccuracy(horizontalAccuracy)) {
-      return config.unknownSpeedConfidence;
+      return config.unknownHorizontalAccuracyConfidence;
     }
 
     if (!isKnownHorizontalAccuracy(horizontalAccuracy)) {

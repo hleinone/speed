@@ -1,5 +1,6 @@
 const double fallbackSpeedAccuracy = 2.0;
 const double unknownSpeedConfidence = 0.25;
+const double unknownHorizontalAccuracyConfidence = 0.25;
 const double maxSpeedAccuracyError = 5.0;
 const double maxAcceptedHorizontalAccuracy = 50.0;
 const double maxPlausibleAcceleration = 8.0;

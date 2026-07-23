@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:speed/src/speed_tracker/position_sample_validator.dart';
+import 'package:speed/src/speed_tracker/speed_tracker_constants.dart' as config;
 
 void main() {
   final now = DateTime.utc(2026, 1, 1, 12);
@@ -50,6 +51,10 @@ void main() {
       expect(knownSample!.hasKnownHorizontalAccuracy, isTrue);
       expect(unknownSample, isNotNull);
       expect(unknownSample!.hasKnownHorizontalAccuracy, isFalse);
+    });
+
+    test('assigns horizontal confidence independently when accuracy is unknown', () {
+      expect(PositionSampleValidator.horizontalAccuracyConfidence(0), config.unknownHorizontalAccuracyConfidence);
     });
 
     test('rejects invalid horizontal accuracy', () {
