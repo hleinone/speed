@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speed/main.dart';
 import 'package:speed/src/animated_app_bar_gradient.dart';
 import 'package:speed/src/display_wake_lock.dart';
 import 'package:speed/src/generated/l10n/l10n.dart';
@@ -14,6 +15,31 @@ import 'package:speed/src/speed_tracking_source.dart';
 import 'package:speed/src/speed_unit_store.dart';
 
 void main() {
+  testWidgets('SpeedApp builds consistent light and dark themes', (tester) async {
+    const themeProbeKey = ValueKey('theme-probe');
+
+    for (final (themeMode, brightness) in [(ThemeMode.light, Brightness.light), (ThemeMode.dark, Brightness.dark)]) {
+      await tester.pumpWidget(
+        SpeedApp(
+          themeMode: themeMode,
+          fontFamily: 'TestFont',
+          home: const SizedBox(key: themeProbeKey),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final theme = Theme.of(tester.element(find.byKey(themeProbeKey)));
+      final inputDecorationTheme = theme.dropdownMenuTheme.inputDecorationTheme;
+
+      expect(theme.brightness, brightness);
+      expect(theme.colorScheme.brightness, brightness);
+      expect(theme.textTheme.bodyMedium?.fontFamily, 'TestFont');
+      expect(theme.dropdownMenuTheme.textStyle, isNull);
+      expect(inputDecorationTheme?.border, InputBorder.none);
+      expect(inputDecorationTheme?.contentPadding, EdgeInsets.zero);
+    }
+  });
+
   testWidgets('SpeedLogo renders as a native Flutter widget', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(

@@ -22,28 +22,22 @@ class SpeedApp extends StatelessWidget {
   final String? fontFamily;
   final bool debugShowCheckedModeBanner;
 
+  ThemeData _buildTheme(Brightness brightness) => ThemeData(
+    colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: brightness),
+    fontFamily: fontFamily,
+    dropdownMenuTheme: const DropdownMenuThemeData(
+      inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Speed',
       debugShowCheckedModeBanner: debugShowCheckedModeBanner,
       locale: locale,
-      theme:
-          ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-            fontFamily: fontFamily,
-          ).copyWith(
-            dropdownMenuTheme: const DropdownMenuThemeData(
-              inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
-            ),
-          ),
-      darkTheme: ThemeData.dark().copyWith(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        dropdownMenuTheme: const DropdownMenuThemeData(
-          textStyle: TextStyle(color: Colors.black),
-          inputDecorationTheme: InputDecorationTheme(border: InputBorder.none, contentPadding: EdgeInsets.zero),
-        ),
-      ),
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
       themeMode: themeMode ?? ThemeMode.system,
       localizationsDelegates: L10n.localizationsDelegates,
       supportedLocales: L10n.supportedLocales,
