@@ -54,7 +54,10 @@ final class PlatformPositionReconciler {
       enforceAccelerationLimit: enforceAccelerationLimit,
     );
     return switch (fallbackValidation) {
-      SpeedSampleAccepted(:final sample) => ReconciledSpeedSample(sample: sample, resetFilter: true),
+      SpeedSampleAccepted(:final sample) => ReconciledSpeedSample(
+        sample: sample,
+        resetFilter: previousAcceptedSample?.source == SpeedSampleSource.platform,
+      ),
       SpeedSampleRejected() => ReconciledSpeedSample(sample: penalizedPlatformSample),
     };
   }

@@ -40,7 +40,25 @@ void main() {
       expect(result.resetFilter, isFalse);
     });
 
-    test('promotes a validated fallback after a repeated conflict', () {
+    test('promotes a validated fallback and resets when transitioning from platform', () {
+      final reconciler = PlatformPositionReconciler();
+      final candidate = _sample(speed: 10, timestamp: timestamp);
+      final previousSample = _sample(speed: 10, timestamp: timestamp.subtract(const Duration(seconds: 1)));
+
+      _reconcile(reconciler, candidate: candidate, positionSpeed: 0);
+      final result = _reconcile(
+        reconciler,
+        candidate: candidate,
+        positionSpeed: 0,
+        previousAcceptedSample: previousSample,
+      );
+
+      expect(result.sample.source, SpeedSampleSource.positionDelta);
+      expect(result.sample.speed, 0);
+      expect(result.resetFilter, isTrue);
+    });
+
+    test('does not request a reset when a promoted fallback initializes the filter', () {
       final reconciler = PlatformPositionReconciler();
       final candidate = _sample(speed: 10, timestamp: timestamp);
 
@@ -48,8 +66,35 @@ void main() {
       final result = _reconcile(reconciler, candidate: candidate, positionSpeed: 0);
 
       expect(result.sample.source, SpeedSampleSource.positionDelta);
-      expect(result.sample.speed, 0);
-      expect(result.resetFilter, isTrue);
+      expect(result.resetFilter, isFalse);
+    });
+
+    test('resets only the first of three consecutive promoted fallbacks', () {
+      final reconciler = PlatformPositionReconciler();
+      var previousSample = _sample(speed: 10, timestamp: timestamp);
+
+      final firstConflict = _reconcile(
+        reconciler,
+        candidate: _sample(speed: 10, timestamp: timestamp.add(const Duration(seconds: 1))),
+        positionSpeed: 0,
+        previousAcceptedSample: previousSample,
+      );
+      previousSample = firstConflict.sample;
+
+      final promotedFallbacks = <ReconciledSpeedSample>[];
+      for (var second = 2; second <= 4; second++) {
+        final result = _reconcile(
+          reconciler,
+          candidate: _sample(speed: 10, timestamp: timestamp.add(Duration(seconds: second))),
+          positionSpeed: 0,
+          previousAcceptedSample: previousSample,
+        );
+        promotedFallbacks.add(result);
+        previousSample = result.sample;
+      }
+
+      expect(promotedFallbacks.map((result) => result.sample.source), everyElement(SpeedSampleSource.positionDelta));
+      expect(promotedFallbacks.map((result) => result.resetFilter), [isTrue, isFalse, isFalse]);
     });
 
     test('keeps the penalized platform candidate when fallback validation fails', () {
