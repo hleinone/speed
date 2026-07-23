@@ -168,13 +168,13 @@ const screenshotScenarios = [
 
 const screenshotTargets = [
   ScreenshotTarget(
-    id: 'app-store-iphone-6.9',
+    id: 'app-store-iphone-6.5',
     store: ScreenshotStore.appStore,
     platform: ScreenshotPlatform.ios,
-    deviceClass: 'iPhone 6.9-inch',
-    outputDirectory: 'iphone-6.9',
-    width: 1320,
-    height: 2868,
+    deviceClass: 'iPhone 6.5-inch',
+    outputDirectory: 'iphone-6.5',
+    width: 1284,
+    height: 2778,
     devicePixelRatio: 3,
     captioned: true,
   ),
@@ -226,10 +226,14 @@ const screenshotTargets = [
 ];
 
 const captionHeightFraction = 0.15;
+const _appStoreIphone65PortraitSizes = {
+  (width: 1242, height: 2688),
+  (width: 1284, height: 2778),
+};
 
 int get screenshotCount => screenshotLocales.length * screenshotScenarios.length * screenshotTargets.length;
 
-List<String> validateStoryboard() {
+List<String> validateStoryboard({List<ScreenshotTarget> targets = screenshotTargets}) {
   final errors = <String>[];
   final localeIds = <String>{};
   final orders = <int>{};
@@ -240,7 +244,7 @@ List<String> validateStoryboard() {
   if (captionHeightFraction <= 0 || captionHeightFraction > 0.15) {
     errors.add('Caption height must be greater than 0 and at most 15%.');
   }
-  if (screenshotLocales.isEmpty || screenshotScenarios.isEmpty || screenshotTargets.isEmpty) {
+  if (screenshotLocales.isEmpty || screenshotScenarios.isEmpty || targets.isEmpty) {
     errors.add('Locales, scenarios, and targets must not be empty.');
   }
 
@@ -276,12 +280,21 @@ List<String> validateStoryboard() {
     }
   }
 
-  for (final target in screenshotTargets) {
+  for (final target in targets) {
     if (target.id.trim().isEmpty || !targetIds.add(target.id)) {
       errors.add('Target IDs must be non-empty and unique: ${target.id}.');
     }
     if (target.width <= 0 || target.height <= 0 || target.devicePixelRatio <= 0) {
       errors.add('${target.id} has invalid dimensions or pixel ratio.');
+    }
+    if (target.id == 'app-store-iphone-6.5' &&
+        !_appStoreIphone65PortraitSizes.contains((
+          width: target.width,
+          height: target.height,
+        ))) {
+      errors.add(
+        '${target.id} must use an accepted 6.5-inch App Store portrait resolution.',
+      );
     }
     if (target.store == ScreenshotStore.googlePlay) {
       final ratio = target.height / target.width;
