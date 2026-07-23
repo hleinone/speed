@@ -30,7 +30,6 @@ class PositionSampleValidator {
       longitude: position.longitude,
       timestamp: position.timestamp,
       horizontalAccuracy: position.accuracy,
-      receivedAt: now,
     );
   }
 
@@ -61,14 +60,12 @@ class ValidPositionSample {
   final double longitude;
   final DateTime timestamp;
   final double horizontalAccuracy;
-  final DateTime receivedAt;
 
   const ValidPositionSample({
     required this.latitude,
     required this.longitude,
     required this.timestamp,
     required this.horizontalAccuracy,
-    required this.receivedAt,
   });
 
   bool get hasKnownHorizontalAccuracy => PositionSampleValidator.isKnownHorizontalAccuracy(horizontalAccuracy);

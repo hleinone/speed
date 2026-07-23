@@ -136,7 +136,6 @@ ValidPositionSample _positionSample(AcceptedSpeedSample sample) {
     longitude: 0,
     timestamp: sample.timestamp,
     horizontalAccuracy: sample.horizontalAccuracy,
-    receivedAt: sample.timestamp,
   );
 }
 

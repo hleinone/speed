@@ -44,7 +44,6 @@ FallbackSpeedEstimate? _estimateSpeed({
         longitude: longitude,
         timestamp: timestamp.add(Duration(seconds: second)),
         horizontalAccuracy: 1,
-        receivedAt: timestamp.add(Duration(seconds: second)),
       ),
     );
   }

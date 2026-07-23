@@ -157,9 +157,7 @@ class PositionDeltaSpeedEstimator {
 
     return _FallbackRegressionResult(
       xSlope: xRegression.slope,
-      xIntercept: xRegression.intercept,
       ySlope: yRegression.slope,
-      yIntercept: yRegression.intercept,
       weightedRmsResidual: sqrt(weightedSquaredResidualSum / weightSum),
       maxResidual: maxResidual,
     );
@@ -300,17 +298,13 @@ class FallbackSpeedEstimate {
 
 class _FallbackRegressionResult {
   final double xSlope;
-  final double xIntercept;
   final double ySlope;
-  final double yIntercept;
   final double weightedRmsResidual;
   final double maxResidual;
 
   const _FallbackRegressionResult({
     required this.xSlope,
-    required this.xIntercept,
     required this.ySlope,
-    required this.yIntercept,
     required this.weightedRmsResidual,
     required this.maxResidual,
   });

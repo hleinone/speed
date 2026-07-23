@@ -2,9 +2,45 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speed/src/speed_tracker/models.dart';
 import 'package:speed/src/speed_tracker/position_sample_validator.dart';
 import 'package:speed/src/speed_tracker/speed_sample_validator.dart';
+import 'package:speed/src/speed_tracker/speed_tracker_constants.dart' as config;
 
 void main() {
   final now = DateTime.utc(2026, 1, 1, 12);
+
+  group('SpeedSampleValidator speed accuracy normalization', () {
+    const validator = SpeedSampleValidator();
+
+    test('uses fallback noise and low confidence for zero accuracy', () {
+      final estimate = validator.normalizeSpeedAccuracy(0);
+
+      expect(estimate.isKnown, isFalse);
+      expect(estimate.standardDeviation, config.fallbackSpeedAccuracy);
+      expect(estimate.measurementNoise, 4.0);
+      expect(estimate.confidence, config.unknownSpeedConfidence);
+    });
+
+    test('treats negative, NaN, and infinite accuracy as unknown', () {
+      const unknownValues = [-1.0, double.nan, double.infinity, double.negativeInfinity];
+
+      for (final speedAccuracy in unknownValues) {
+        final estimate = validator.normalizeSpeedAccuracy(speedAccuracy);
+
+        expect(estimate.isKnown, isFalse);
+        expect(estimate.standardDeviation, config.fallbackSpeedAccuracy);
+        expect(estimate.measurementNoise, 4.0);
+        expect(estimate.confidence, config.unknownSpeedConfidence);
+      }
+    });
+
+    test('preserves positive accuracy and existing confidence formula', () {
+      final estimate = validator.normalizeSpeedAccuracy(1.25);
+
+      expect(estimate.isKnown, isTrue);
+      expect(estimate.standardDeviation, 1.25);
+      expect(estimate.measurementNoise, closeTo(1.5625, 0.000001));
+      expect(estimate.confidence, closeTo(0.75, 0.000001));
+    });
+  });
 
   group('SpeedSampleValidator platform samples', () {
     test('accepts a valid sample and fixes its source', () {
@@ -185,13 +221,7 @@ SpeedSampleValidation _validatePositionDelta({
 }
 
 ValidPositionSample _positionSample({required DateTime timestamp, required double horizontalAccuracy}) {
-  return ValidPositionSample(
-    latitude: 0,
-    longitude: 0,
-    timestamp: timestamp,
-    horizontalAccuracy: horizontalAccuracy,
-    receivedAt: timestamp,
-  );
+  return ValidPositionSample(latitude: 0, longitude: 0, timestamp: timestamp, horizontalAccuracy: horizontalAccuracy);
 }
 
 AcceptedSpeedSample _acceptedSample({required double speed, required DateTime timestamp}) {

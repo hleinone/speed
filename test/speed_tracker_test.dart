@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:speed/src/speed_tracker.dart';
+import 'package:speed/src/speed_tracker/speed_tracker_constants.dart' as config;
 
 void main() {
   group('Speed', () {
@@ -195,7 +196,7 @@ void main() {
         harness.addPosition(_position(speed: 20, timestamp: now.add(const Duration(seconds: 1))));
         unawaited(harness.closePositionStream());
         async.flushMicrotasks();
-        async.elapse(SpeedTracker.freshnessTimeout);
+        async.elapse(config.freshnessTimeout);
         async.flushMicrotasks();
 
         expect(harness.emissions, [isA<CurrentSpeed>()]);
@@ -278,39 +279,6 @@ void main() {
     });
   });
 
-  group('SpeedTracker.normalizeSpeedAccuracy', () {
-    test('uses fallback noise and low confidence for zero accuracy', () {
-      final estimate = SpeedTracker.normalizeSpeedAccuracy(0);
-
-      expect(estimate.isKnown, isFalse);
-      expect(estimate.standardDeviation, SpeedTracker.fallbackSpeedAccuracy);
-      expect(estimate.measurementNoise, 4.0);
-      expect(estimate.confidence, SpeedTracker.unknownSpeedConfidence);
-    });
-
-    test('treats negative, NaN, and infinite accuracy as unknown', () {
-      const unknownValues = [-1.0, double.nan, double.infinity, double.negativeInfinity];
-
-      for (final speedAccuracy in unknownValues) {
-        final estimate = SpeedTracker.normalizeSpeedAccuracy(speedAccuracy);
-
-        expect(estimate.isKnown, isFalse);
-        expect(estimate.standardDeviation, SpeedTracker.fallbackSpeedAccuracy);
-        expect(estimate.measurementNoise, 4.0);
-        expect(estimate.confidence, SpeedTracker.unknownSpeedConfidence);
-      }
-    });
-
-    test('preserves positive accuracy and existing confidence formula', () {
-      final estimate = SpeedTracker.normalizeSpeedAccuracy(1.25);
-
-      expect(estimate.isKnown, isTrue);
-      expect(estimate.standardDeviation, 1.25);
-      expect(estimate.measurementNoise, closeTo(1.5625, 0.000001));
-      expect(estimate.confidence, closeTo(0.75, 0.000001));
-    });
-  });
-
   group('SpeedTracker.createLocationSettings', () {
     test('requests one-second Android position updates without a stream time limit', () {
       final locationSettings = SpeedTracker.createLocationSettings(TargetPlatform.android);
@@ -319,7 +287,7 @@ void main() {
       final androidSettings = locationSettings as AndroidSettings;
       expect(androidSettings.accuracy, LocationAccuracy.bestForNavigation);
       expect(androidSettings.distanceFilter, 0);
-      expect(androidSettings.intervalDuration, SpeedTracker.positionUpdateInterval);
+      expect(androidSettings.intervalDuration, config.positionUpdateInterval);
       expect(androidSettings.timeLimit, isNull);
     });
   });
@@ -362,8 +330,8 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, closeTo(4, 0.1));
-      expect(harness.emittedSpeeds.single.accuracy, closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001));
-      expect(harness.emittedSpeeds.single.accuracy, lessThan(SpeedTracker.unknownSpeedConfidence));
+      expect(harness.emittedSpeeds.single.accuracy, closeTo(config.fallbackSpeedConfidence * 0.9, 0.000001));
+      expect(harness.emittedSpeeds.single.accuracy, lessThan(config.unknownSpeedConfidence));
     });
 
     test('does not clamp stable low fallback movement inside GPS accuracy to zero', () async {
@@ -404,7 +372,7 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, 0);
-      expect(harness.emittedSpeeds.single.accuracy, closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001));
+      expect(harness.emittedSpeeds.single.accuracy, closeTo(config.fallbackSpeedConfidence * 0.9, 0.000001));
     });
 
     test('uses zero fallback speed below the stationary speed epsilon', () async {
@@ -510,7 +478,7 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, 0);
-      expect(harness.emittedSpeeds.single.accuracy, greaterThan(SpeedTracker.fallbackSpeedConfidence));
+      expect(harness.emittedSpeeds.single.accuracy, greaterThan(config.fallbackSpeedConfidence));
     });
 
     test('trusts platform speed with unknown horizontal accuracy at low confidence', () async {
@@ -523,9 +491,9 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, 8);
-      expect(harness.emittedSpeeds.single.accuracy, closeTo(SpeedTracker.unknownSpeedConfidence * 0.9, 0.000001));
+      expect(harness.emittedSpeeds.single.accuracy, closeTo(config.unknownSpeedConfidence * 0.9, 0.000001));
       expect(harness.emittedSpeeds.single.accuracy, greaterThan(0));
-      expect(harness.emittedSpeeds.single.accuracy, lessThan(SpeedTracker.unknownSpeedConfidence));
+      expect(harness.emittedSpeeds.single.accuracy, lessThan(config.unknownSpeedConfidence));
     });
 
     test('trusts platform zero speed with unknown horizontal accuracy at low confidence', () async {
@@ -538,9 +506,9 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, 0);
-      expect(harness.emittedSpeeds.single.accuracy, closeTo(SpeedTracker.unknownSpeedConfidence * 0.9, 0.000001));
+      expect(harness.emittedSpeeds.single.accuracy, closeTo(config.unknownSpeedConfidence * 0.9, 0.000001));
       expect(harness.emittedSpeeds.single.accuracy, greaterThan(0));
-      expect(harness.emittedSpeeds.single.accuracy, lessThan(SpeedTracker.unknownSpeedConfidence));
+      expect(harness.emittedSpeeds.single.accuracy, lessThan(config.unknownSpeedConfidence));
     });
 
     test('emits a platform first sample immediately', () async {
@@ -560,7 +528,7 @@ void main() {
       addTearDown(harness.dispose);
 
       await harness.start();
-      harness.addPosition(_position(speed: 8, speedAccuracy: SpeedTracker.maxSpeedAccuracyError, timestamp: now));
+      harness.addPosition(_position(speed: 8, speedAccuracy: config.maxSpeedAccuracyError, timestamp: now));
       await pumpEventQueue();
 
       expect(harness.emittedSpeeds, isEmpty);
@@ -572,7 +540,7 @@ void main() {
 
       await harness.start();
       harness.addPosition(
-        _position(speed: 8, speedAccuracy: 0.5, accuracy: SpeedTracker.maxAcceptedHorizontalAccuracy, timestamp: now),
+        _position(speed: 8, speedAccuracy: 0.5, accuracy: config.maxAcceptedHorizontalAccuracy, timestamp: now),
       );
       await pumpEventQueue();
 
@@ -623,7 +591,7 @@ void main() {
 
       expect(harness.emittedSpeeds, hasLength(1));
       expect(harness.emittedSpeeds.single.value, closeTo(4, 0.1));
-      expect(harness.emittedSpeeds.single.accuracy, closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001));
+      expect(harness.emittedSpeeds.single.accuracy, closeTo(config.fallbackSpeedConfidence * 0.9, 0.000001));
     });
 
     test('withholds fallback at zero-confidence horizontal accuracy boundary', () async {
@@ -637,7 +605,7 @@ void main() {
             metersEast: 4.0 * i,
             speed: 0,
             speedAccuracy: 0,
-            accuracy: SpeedTracker.maxAcceptedHorizontalAccuracy,
+            accuracy: config.maxAcceptedHorizontalAccuracy,
             timestamp: now.subtract(Duration(seconds: 4 - i)),
           ),
         );
@@ -778,7 +746,7 @@ void main() {
       harness.addPosition(_position(speed: 0, speedAccuracy: 0, timestamp: now));
       await pumpEventQueue();
 
-      currentNow = now.add(SpeedTracker.freshnessTimeout + const Duration(seconds: 1));
+      currentNow = now.add(config.freshnessTimeout + const Duration(seconds: 1));
       harness.addPosition(_position(longitude: 0.0001, speed: 0, speedAccuracy: 0, timestamp: currentNow));
       await pumpEventQueue();
 
@@ -882,7 +850,7 @@ void main() {
       expect(harness.emittedSpeeds[3].value, 10);
       expect(harness.emittedSpeeds[3].accuracy, lessThan(harness.emittedSpeeds[2].accuracy));
       expect(harness.emittedSpeeds.last.value, 0);
-      expect(harness.emittedSpeeds.last.accuracy, closeTo(SpeedTracker.fallbackSpeedConfidence * 0.9, 0.000001));
+      expect(harness.emittedSpeeds.last.accuracy, closeTo(config.fallbackSpeedConfidence * 0.9, 0.000001));
     });
 
     test('keeps platform confidence when position estimate uncertainty covers disagreement', () async {
@@ -956,7 +924,7 @@ void main() {
 
         harness.startListening();
         async.flushMicrotasks();
-        async.elapse(SpeedTracker.freshnessTimeout);
+        async.elapse(config.freshnessTimeout);
         async.flushMicrotasks();
         unawaited(harness.closePositionStream());
         async.flushMicrotasks();
@@ -974,7 +942,7 @@ void main() {
 
         harness.startListening();
         async.flushMicrotasks();
-        async.elapse(SpeedTracker.freshnessTimeout - const Duration(milliseconds: 1));
+        async.elapse(config.freshnessTimeout - const Duration(milliseconds: 1));
         async.flushMicrotasks();
         expect(harness.emittedSpeeds, isEmpty);
 
@@ -1097,7 +1065,7 @@ void main() {
         harness.addPosition(_position(speed: 10, timestamp: now));
         async.flushMicrotasks();
 
-        async.elapse(SpeedTracker.freshnessTimeout - const Duration(milliseconds: 1));
+        async.elapse(config.freshnessTimeout - const Duration(milliseconds: 1));
         async.flushMicrotasks();
 
         unawaited(harness.dispose());
@@ -1116,7 +1084,7 @@ void main() {
         harness.addPosition(_position(speed: 10, timestamp: now));
         async.flushMicrotasks();
 
-        async.elapse(SpeedTracker.freshnessTimeout);
+        async.elapse(config.freshnessTimeout);
         async.flushMicrotasks();
 
         unawaited(harness.dispose());
@@ -1162,7 +1130,7 @@ void main() {
         harness.addPosition(_position(speed: 10.1, timestamp: now.add(const Duration(seconds: 5))));
         async.flushMicrotasks();
 
-        async.elapse(SpeedTracker.freshnessTimeout - const Duration(milliseconds: 1));
+        async.elapse(config.freshnessTimeout - const Duration(milliseconds: 1));
         async.flushMicrotasks();
 
         expect(harness.emissions, [isA<CurrentSpeed>(), isA<CurrentSpeed>()]);

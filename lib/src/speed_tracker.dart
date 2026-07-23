@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:speed/src/speed_tracker/models.dart';
 import 'package:speed/src/speed_tracker/speed_sample_processor.dart';
-import 'package:speed/src/speed_tracker/speed_sample_validator.dart';
 import 'package:speed/src/speed_tracker/speed_tracker_constants.dart' as config;
 import 'package:speed/src/speed_tracking_source.dart';
 
@@ -64,18 +63,6 @@ class GeolocatorGateway implements GeolocationGateway {
 }
 
 class SpeedTracker implements SpeedTrackingSource {
-  static const double fallbackSpeedAccuracy = config.fallbackSpeedAccuracy;
-  static const double unknownSpeedConfidence = config.unknownSpeedConfidence;
-  static const double maxSpeedAccuracyError = config.maxSpeedAccuracyError;
-  static const double maxAcceptedHorizontalAccuracy = config.maxAcceptedHorizontalAccuracy;
-  static const double maxPlausibleAcceleration = config.maxPlausibleAcceleration;
-  static const double fallbackSpeedConfidence = config.fallbackSpeedConfidence;
-  static const Duration maxSampleAge = config.maxSampleAge;
-  static const Duration positionUpdateInterval = config.positionUpdateInterval;
-  static const Duration freshnessTimeout = config.freshnessTimeout;
-  static const Duration maxFutureSampleSkew = config.maxFutureSampleSkew;
-  static const int startupWarmupAcceptedSamples = config.startupWarmupAcceptedSamples;
-
   /// Process noise per second for the Kalman filter. A lower value means more smoothing but less responsiveness.
   final double processNoise;
   final SpeedTrackerClock _clock;
@@ -150,7 +137,7 @@ class SpeedTracker implements SpeedTrackingSource {
     void scheduleFreshnessWatchdog(AcceptedSpeedSample sample, DateTime now) {
       freshnessTimer?.cancel();
       final age = now.difference(sample.timestamp);
-      final delay = freshnessTimeout - age;
+      final delay = config.freshnessTimeout - age;
       freshnessTimer = Timer(delay.isNegative ? Duration.zero : delay, emitUnavailable);
     }
 
@@ -192,7 +179,7 @@ class SpeedTracker implements SpeedTrackingSource {
     }
 
     void onListen() {
-      freshnessTimer = Timer(freshnessTimeout, emitUnavailable);
+      freshnessTimer = Timer(config.freshnessTimeout, emitUnavailable);
       try {
         positionStreamSubscription = _geolocation
             .getPositionStream(locationSettings)
@@ -286,16 +273,12 @@ class SpeedTracker implements SpeedTrackingSource {
       return AndroidSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0,
-        intervalDuration: positionUpdateInterval,
+        intervalDuration: config.positionUpdateInterval,
       );
     }
     if (platform == TargetPlatform.iOS || platform == TargetPlatform.macOS) {
       return AppleSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
     }
     return const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
-  }
-
-  static SpeedAccuracyEstimate normalizeSpeedAccuracy(double speedAccuracy) {
-    return const SpeedSampleValidator().normalizeSpeedAccuracy(speedAccuracy);
   }
 }
