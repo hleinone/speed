@@ -43,10 +43,14 @@ class SpeedSampleProcessor {
 
     final isFallbackSample = _speedSampleValidator.hasUnknownSpeedAccuracy(position.speedAccuracy);
     final addedToFallbackWindow = _positionDeltaSpeedEstimator.addSample(positionSample);
+    // A sample with neither speed nor horizontal accuracy signals a degraded fix,
+    // so any pending confirmation no longer applies.
     if (isFallbackSample && !positionSample.hasKnownHorizontalAccuracy) {
       _sampleConfirmationGate.reset();
       return null;
     }
+    // A fallback sample rejected by the window (stale or out-of-order timestamp) is
+    // merely dropped; the fix itself has not degraded, so pending confirmations stay valid.
     if (!addedToFallbackWindow && isFallbackSample) {
       return null;
     }
